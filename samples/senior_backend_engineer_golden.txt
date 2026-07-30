@@ -1,0 +1,18 @@
+Senior Backend Engineer, Payments Platform
+
+You will own the services behind our payments platform: design, ship, and operate
+systems processing millions of events per day, and carry the pager for what you build.
+
+Requirements
+- Strong experience running containerised workloads in production
+- Experience with high-throughput event streaming such as Kafka
+- A track record of measurably improving system performance or reliability
+- Comfortable owning services in production, including on-call
+- Strong server-side programming in a compiled or statically typed language
+
+Nice to have
+- Experience building distributed systems from first principles
+- Open source contributions
+- Infrastructure as code
+
+We offer competitive salary, equity, and a hybrid working policy.

@@ -1,0 +1,49 @@
+# Deploy to Render: https://render.com
+#
+# One web service, built from the Dockerfile, which already compiles the
+# dashboard and serves it from the same process as the API. Nothing else to
+# stand up.
+#
+#   1. push this repository to GitHub
+#   2. Render dashboard -> New -> Blueprint -> pick the repository
+#   3. paste the model key when prompted (it is marked sync:false below, so it
+#      is never committed and never appears in the blueprint)
+#
+# The free instance type sleeps after inactivity and takes about thirty seconds
+# to wake. Fine for a portfolio link, not for anything on a clock.
+
+services:
+  - type: web
+    name: hirelens
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: HIRELENS_LLM_PROVIDER
+        value: gemini
+      - key: HIRELENS_GEMINI_API_KEY
+        sync: false # prompted at deploy time, never stored in the repository
+      - key: HIRELENS_GEMINI_MODEL
+        value: gemini-flash-latest
+      - key: HIRELENS_BLIND_MODE
+        value: "true"
+      # The free tier's quota is the binding constraint, not CPU. Pace well
+      # under it: a public demo may get several visitors at once, and a 429 in
+      # front of a stranger is worse than a slow run.
+      - key: HIRELENS_REQUESTS_PER_MINUTE
+        value: "10"
+      - key: HIRELENS_MAX_CONCURRENT_REQUESTS
+        value: "2"
+      - key: HIRELENS_SELF_CONSISTENCY_K
+        value: "3"
+      - key: HIRELENS_DATABASE_URL
+        fromDatabase:
+          name: hirelens-db
+          property: connectionString
+
+databases:
+  - name: hirelens-db
+    plan: free
+    databaseName: hirelens
+    user: hirelens

@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint, types, tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the declared floor and 3.12 is what most people have. Testing
+        # both catches the version-specific mistakes that are otherwise found by
+        # whoever clones the repo.
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: |
+          ruff check src tests scripts
+          ruff format --check src tests
+
+      - name: Types
+        run: mypy src
+        continue-on-error: true
+
+      - name: Tests
+        # No API key and no network: every test runs against a fake provider and
+        # the dependency-free embedder.
+        run: pytest -q --cov=hirelens --cov-report=term-missing
+
+  web:
+    name: dashboard
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Types
+        # The API client is typed against the response models by hand, so this
+        # step is what catches a schema change that the frontend has not
+        # followed. It is a real check, not a formality.
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  eval:
+    name: evaluation harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Harness smoke test
+        # Proves the eval plumbing still works on every commit. The real harness
+        # needs an API key and human labels, so it is run manually and its report
+        # is committed; this job guards the machinery around it.
+        run: python scripts/smoke_eval.py
+
+      - name: Bias audit smoke test
+        # Runs both cases: a clean stand-in the audit must pass, and one rigged to
+        # reward elite institutions that it must catch. An audit that cannot detect
+        # deliberate bias is worse than none, so this guards the guard.
+        run: python scripts/smoke_audit.py
+
+      - name: Regression gate
+        # Only runs when a baseline report has been committed. Fails the build if
+        # agreement with human ranking has dropped beyond tolerance.
+        run: |
+          if [ -f evals/reports/baseline.json ] && [ -f evals/reports/latest.json ]; then
+            python -m hirelens.evals.cli gate
+          else
+            echo "No committed baseline yet; skipping the regression gate."
+          fi

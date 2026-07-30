@@ -1,0 +1,60 @@
+%% Rendered on GitHub automatically. `docs/architecture.svg` is the same graph,
+%% exported so it also shows up in places that do not render Mermaid.
+flowchart TB
+    subgraph client["Browser"]
+        UI["React dashboard<br/>evidence highlighting, live progress"]
+    end
+
+    subgraph api["FastAPI"]
+        R["Routes<br/>jobs, documents, runs"]
+        BG["Background runner<br/>SSE progress channel"]
+        DB[("SQLite / Postgres<br/>content-addressed ids")]
+    end
+
+    subgraph pipeline["Screening pipeline"]
+        ING["Ingest<br/>PyMuPDF, column-aware line ordering"]
+        RED["Redact<br/>length-preserving PII masks"]
+        EXT["Extract<br/>Cited[T] with located spans"]
+        RUB["Compile rubric<br/>weighted atomic requirements"]
+        RET["Retrieve<br/>BM25 + dense, fused by RRF"]
+        JUD["Judge<br/>k samples, median verdict"]
+        AGG["Aggregate<br/>bootstrap interval, risks, questions"]
+    end
+
+    subgraph llm["LLM layer"]
+        CL["Client<br/>cache, rate limiter, retries, schema repair"]
+        P1["Gemini"]
+        P2["Groq"]
+        P3["Ollama (local)"]
+    end
+
+    subgraph quality["Quality gates (CI)"]
+        EV["Evaluation harness<br/>golden set vs 3 baselines"]
+        AU["Counterfactual audit<br/>4 bias axes + null control"]
+    end
+
+    UI -->|"REST + EventSource"| R
+    R --> BG
+    R <--> DB
+    BG --> DB
+    BG --> ING
+
+    ING --> RED --> EXT --> RET --> JUD --> AGG
+    RUB --> RET
+    RUB --> JUD
+    AGG --> DB
+
+    EXT -.-> CL
+    RUB -.-> CL
+    JUD -.-> CL
+    CL --> P1
+    CL --> P2
+    CL --> P3
+
+    EV --> AGG
+    AU --> AGG
+
+    classDef store fill:#1a2333,stroke:#5b9cff,color:#e6edf7
+    classDef gate fill:#1a2333,stroke:#37c98b,color:#e6edf7
+    class DB store
+    class EV,AU gate

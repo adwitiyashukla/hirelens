@@ -1,0 +1,25 @@
+ALEX MERCER
+alex.mercer@example.com | Berlin | github.com/alexmercer
+
+Backend engineer, distributed systems and payments
+
+EXPERIENCE
+Senior Backend Engineer, Northwind Payments (2021 - present)
+Owned the settlement service end to end, processing 4M events per day through Kafka.
+Cut p99 authorisation latency from 840ms to 120ms by replacing a synchronous ledger write with an append-only log.
+Ran the service on Kubernetes across three regions and carried the primary pager for two years.
+Reduced incident rate by 60% over four quarters by introducing backpressure and circuit breaking.
+
+Backend Engineer, Loamworks (2018 - 2021)
+Built the billing reconciliation pipeline in Go, handling 200k transactions daily.
+Migrated 40 services from EC2 to Kubernetes with Terraform-managed infrastructure.
+
+PROJECTS
+raftkv: Raft consensus implementation and distributed key-value store in Go - github.com/alexmercer/raftkv
+620 stars. Used as teaching material in two university courses.
+
+EDUCATION
+B.S. Computer Science, State University (2021)
+
+SKILLS
+Go, Rust, Python, Kafka, Kubernetes, Terraform, PostgreSQL, gRPC

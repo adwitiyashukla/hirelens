@@ -1,0 +1,52 @@
+# Postgres plus the API. `docker compose up` and open http://localhost:8000/docs
+#
+# The API also runs with no Docker at all: it defaults to SQLite, so
+# `pip install -e ".[api]" && uvicorn hirelens.api.app:app` is enough to try it.
+# This file exists for the deployment shape, not because it is required.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hirelens
+      POSTGRES_PASSWORD: hirelens
+      POSTGRES_DB: hirelens
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The API waits for this rather than crash-looping on startup.
+      test: ["CMD-SHELL", "pg_isready -U hirelens -d hirelens"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HIRELENS_DATABASE_URL: postgresql+asyncpg://hirelens:hirelens@db:5432/hirelens
+      # Passed through from your shell or .env. Ingestion and parsing work
+      # without it; scoring needs it.
+      HIRELENS_LLM_PROVIDER: ${HIRELENS_LLM_PROVIDER:-gemini}
+      HIRELENS_GEMINI_API_KEY: ${HIRELENS_GEMINI_API_KEY:-}
+      HIRELENS_BLIND_MODE: ${HIRELENS_BLIND_MODE:-true}
+      HIRELENS_LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist the LLM response cache across restarts so re-running a batch is
+      # free rather than re-billed.
+      - cache:/app/.hirelens_cache
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  cache:

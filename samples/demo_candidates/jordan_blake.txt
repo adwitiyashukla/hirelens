@@ -1,0 +1,17 @@
+JORDAN BLAKE
+jordan.blake@example.com | Manchester
+
+Backend engineer
+
+EXPERIENCE
+Backend Engineer, Harbourline Logistics (2020 - present)
+Built REST services in Java Spring for warehouse routing.
+Containerised eight services with Docker and docker-compose.
+Used RabbitMQ for asynchronous job dispatch between services.
+Improved a nightly batch job from 6 hours to 2 hours.
+
+EDUCATION
+B.S. Computer Science, State University (2021)
+
+SKILLS
+Java, Spring, Docker, RabbitMQ, MySQL

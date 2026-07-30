@@ -1,0 +1,16 @@
+SAM OKAFOR
+sam.okafor@example.com | Lagos
+
+Full stack developer
+
+EXPERIENCE
+Software Developer, Bright Path Solutions (2022 - present)
+Was responsible for various backend tasks and bug fixes.
+Worked on internal tools used by the operations team.
+Participated in code reviews and agile ceremonies.
+
+EDUCATION
+B.S. Computer Science, State University (2021)
+
+SKILLS
+Kubernetes, Kafka, Go, Terraform, gRPC, PostgreSQL, Docker, AWS, microservices, distributed systems

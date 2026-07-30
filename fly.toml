@@ -1,0 +1,54 @@
+# Deploy to Fly.io: https://fly.io
+#
+# The alternative to render.yaml. Fly keeps the machine warm rather than
+# sleeping it, so the demo link responds immediately, but it needs a card on
+# file even inside the free allowance.
+#
+#   fly launch --no-deploy --copy-config
+#   fly secrets set HIRELENS_GEMINI_API_KEY=...
+#   fly volumes create hirelens_data --size 1
+#   fly deploy
+#
+# SQLite on a volume rather than Postgres: one screening demo does not need a
+# database server, and a volume keeps the whole thing inside the free tier.
+
+app = "hirelens"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  HIRELENS_LLM_PROVIDER = "gemini"
+  HIRELENS_GEMINI_MODEL = "gemini-flash-latest"
+  HIRELENS_BLIND_MODE = "true"
+  HIRELENS_DATABASE_URL = "sqlite+aiosqlite:////data/hirelens.db"
+  HIRELENS_CACHE_DIR = "/data/cache"
+  # Well under the free-tier quota. See render.yaml for why.
+  HIRELENS_REQUESTS_PER_MINUTE = "10"
+  HIRELENS_MAX_CONCURRENT_REQUESTS = "2"
+
+[[mounts]]
+  source = "hirelens_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # Never scale past one. The background runner holds run state in process
+  # memory, so a second machine would report "run not found" for half the
+  # requests. Scaling out means a real job queue first.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

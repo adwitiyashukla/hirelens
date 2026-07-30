@@ -1,0 +1,19 @@
+PRIYA RAMAN
+priya.raman@example.com | Bengaluru | github.com/priyaraman
+
+Backend engineer
+
+EXPERIENCE
+Backend Engineer, Fintech Co. (2022 - present)
+Cut p99 checkout latency from 1.2s to 180ms by removing an ORM N+1 in the payments path.
+Built a Kafka consumer group processing 2M settlement events per day.
+Deployed and operated the reconciliation service on Kubernetes.
+
+PROJECTS
+kvstore: Raft-based distributed key-value store in Go - github.com/priyaraman/kvstore
+
+EDUCATION
+B.S. Computer Science, State University (2021)
+
+SKILLS
+Go, Python, PostgreSQL, Kafka, Kubernetes, Terraform

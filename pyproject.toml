@@ -1,0 +1,111 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hirelens"
+version = "0.1.0"
+description = "Evidence-grounded candidate screening with a measured evaluation harness and an automated bias audit."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Adwitiya Shukla" }]
+keywords = ["llm", "rag", "resume-screening", "responsible-ai", "evaluation", "fairness"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # config
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "python-dotenv>=1.0",
+    # ingestion
+    "pymupdf>=1.24",
+    "python-docx>=1.1",
+    # llm transport (providers are called over plain HTTP so we avoid heavy SDKs)
+    "httpx>=0.27",
+    "tenacity>=8.3",
+    # cli / output
+    "typer>=0.12",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+retrieval = [
+    "sentence-transformers>=3.0",
+    "rank-bm25>=0.2.2",
+    "numpy>=1.26",
+]
+api = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",       # zero-setup default, and what the tests run against
+    "asyncpg>=0.29",         # postgres in deployment
+    "python-multipart>=0.0.9",
+]
+evals = [
+    "scipy>=1.13",
+    "pandas>=2.2",
+    "matplotlib>=3.9",
+]
+dev = [
+    "pytest>=8.2",
+    "httpx>=0.27",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-requests",
+]
+
+[project.scripts]
+hirelens = "hirelens.cli:app"
+hirelens-evals = "hirelens.evals.cli:app"
+hirelens-audit = "hirelens.audit.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/adwitiya/hirelens"
+Documentation = "https://github.com/adwitiya/hirelens/blob/main/docs/DESIGN.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hirelens"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "C4", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["hirelens"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["fitz.*", "pymupdf.*", "docx.*", "rank_bm25.*", "sentence_transformers.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+markers = [
+    "live: hits a real LLM provider, skipped unless HIRELENS_RUN_LIVE_TESTS=1",
+    "slow: takes more than a couple of seconds",
+]
