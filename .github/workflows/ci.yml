@@ -30,7 +30,15 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install -e ".[dev]"
+        # `api` as well as `dev`, because tests/test_api.py imports the FastAPI
+        # app and the async SQLAlchemy layer. Installing only `dev` makes pytest
+        # fail during collection, which reads as a broken test suite rather than
+        # a missing dependency.
+        #
+        # Deliberately not `retrieval` or `evals`: the suite runs against the
+        # dependency-free hashing embedder and the in-repo metrics, so adding
+        # torch and scipy would cost minutes per run and prove nothing.
+        run: pip install -e ".[dev,api]"
 
       - name: Lint
         run: |
