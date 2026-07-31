@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
@@ -45,6 +46,49 @@ logger = logging.getLogger(__name__)
 #: reliability comes from seeing little enough that it cannot wander, and beyond
 #: about five chunks the marginal one is almost always noise.
 DEFAULT_TOP_K = 4
+
+#: Below this, a document is a stub (a cover note, a mostly blank page) and
+#: producing few evidence units from it is correct rather than suspicious.
+_MIN_CHARS_TO_EXPECT_EVIDENCE = 400
+
+#: One evidence unit per this many characters is already far below anything a
+#: real resume produces. Observed rates are one per 50 to 80 characters, so this
+#: only fires on genuine breakage, not on a terse candidate.
+_CHARS_PER_EXPECTED_UNIT = 400
+
+
+def _reject_degenerate_extraction(document: SourceDocument, units: Sequence[object]) -> None:
+    """Refuse to score a document the extractor clearly failed to read.
+
+    Written after watching a model return a nearly empty resume object that
+    still validated, because the fields it omitted all had defaults. The
+    pipeline scored the candidate 0 out of 100 and reported grounding 100% and
+    citation validity 100%, since the one claim it did extract was properly
+    cited. Every quality metric was green and the answer was worthless.
+
+    The metrics are ratios, so they measure internal consistency and say nothing
+    about coverage. An absolute floor is the missing half.
+
+    Raising is deliberate. Scoring anyway would put a confident zero in front of
+    a real hiring decision, and a candidate should never be rejected because a
+    model had a bad night.
+    """
+    length = len(document.text)
+    if length < _MIN_CHARS_TO_EXPECT_EVIDENCE:
+        return
+
+    expected = max(2, length // _CHARS_PER_EXPECTED_UNIT)
+    if len(units) >= expected:
+        return
+
+    raise ValueError(
+        f"Extraction produced {len(units)} evidence unit(s) from a "
+        f"{length}-character document, where at least {expected} were expected. "
+        f"The model returned almost nothing usable, so any score computed from "
+        f"this would be a confident zero built on no evidence.\n\n"
+        f"Refusing to score rather than reporting that. Try again, or switch "
+        f"provider with HIRELENS_LLM_PROVIDER."
+    )
 
 
 class ScreeningResult(BaseModel):
@@ -104,6 +148,8 @@ class ScreeningPipeline:
         resume = extraction.resume
 
         units = merge_overlapping(chunk_resume(resume))
+        _reject_degenerate_extraction(document, units)
+
         retriever = HybridRetriever(units=units, embedder=self.embedder)
         hits = retriever.search_many(
             {r.requirement_id: r.query for r in rubric.requirements}, top_k=top_k

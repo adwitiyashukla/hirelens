@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api/client";
 import type { Health } from "./api/types";
 import { CandidateDetail } from "./components/CandidateDetail";
+import { Cpu, Logo, Shield } from "./components/Icons";
 import { MethodPage } from "./components/MethodPage";
 import { ScreenPage } from "./components/ScreenPage";
 
@@ -32,7 +33,13 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          HireLens <span>evidence-grounded screening</span>
+          <span className="mark">
+            <Logo />
+          </span>
+          <span className="wordmark">
+            <strong>HireLens</strong>
+            <span>evidence-grounded screening</span>
+          </span>
         </div>
         <nav>
           <button
@@ -51,12 +58,24 @@ export default function App() {
         <div className="spacer" />
         {health && (
           <>
+            {/*
+              Spelled out rather than labelled "blind mode". The bare phrase is
+              internal jargon: it tells a reader nothing, and this is one of the
+              stronger properties of the system, so it should state itself.
+            */}
             {health.blind_mode && (
-              <span className="badge neutral" title="Names and contact details are redacted before the model reads a resume">
-                blind mode
+              <span
+                className="status-chip on"
+                title="Names, emails, phone numbers, addresses and institutions are masked before the resume reaches the model. The masks are the same length as the text they replace, so character offsets stay valid and citations still point at the right lines."
+              >
+                <Shield />
+                Names hidden from model
               </span>
             )}
-            <span className="tag mono">{health.model}</span>
+            <span className="status-chip" title="The model performing the screening">
+              <Cpu />
+              <span className="value">{health.model}</span>
+            </span>
           </>
         )}
       </header>

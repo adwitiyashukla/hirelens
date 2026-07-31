@@ -16,10 +16,15 @@ human judgement, and every score is audited for demographic bias.
 
 ---
 
-> **Status: all 9 phases built. 365 Python tests and 9 dashboard tests passing.** The screening
+> **Status: all 9 phases built. 397 Python tests and 9 dashboard tests passing.** The screening
 > pipeline, the evaluation harness, the bias audit, the HTTP API and the React dashboard are all
 > in the repository and exercised in CI. The build plan is in
 > [`docs/DESIGN.md`](docs/DESIGN.md#8-build-plan).
+>
+> The system has been run end to end against two independent providers, Gemini and Groq. Doing
+> that surfaced three real bugs that a single-provider project would never have found. They are
+> written up in [Three bugs worth reading about](#three-bugs-worth-reading-about), because the
+> diagnoses are more interesting than the feature list.
 >
 > **No quality numbers are published yet.** The evaluation harness needs human ground truth, and
 > that is the one thing that cannot be generated. Until those labels exist, quoting a correlation
@@ -73,13 +78,12 @@ and clicking a highlight selects the requirement it belongs to. That round trip 
 argument: a number you can trace back to a line of text is a different object from a number a
 model produced.
 
-<!--
-  Screenshots go here once the demo has been run against a live provider.
-  See docs/screenshots/README.md for the exact five captures and how to take them.
-
-  ![Ranked shortlist](docs/screenshots/shortlist.png)
-  ![Evidence highlighting](docs/screenshots/evidence.png)
--->
+> **Dashboard screenshots are not committed yet.** The interface runs, and the screening flow has
+> been driven end to end against a live provider, but the captures worth publishing are of a run
+> where every candidate is scored cleanly, and free-tier quotas made that a slow thing to arrange.
+> `docs/screenshots/README.md` specifies exactly which five to take. A mocked screenshot on a
+> project whose entire argument is that unevidenced claims are worthless would be self-refuting,
+> so there are none.
 
 What the interface refuses to do is as deliberate as what it does:
 
@@ -444,6 +448,16 @@ The audit sees the injected bias, attributes it to the right axis and the right 
 the three shortlist positions it moved, and confirms that masking blocks it entirely. Both cases
 run in CI on every commit.
 
+Both cases, as they actually run:
+
+| | |
+|---|---|
+| ![Audit on a clean model](docs/screenshots/audit_case1.png) | ![Audit catching injected bias](docs/screenshots/audit_case2.png) |
+| **Case 1, unbiased stand-in.** Every axis at 0.00 drift, no flips, audit passes. An instrument that cannot stay quiet on a clean system is useless. | **Case 2, stand-in rigged to reward elite institutions.** 63.40 points of drift with blind mode off, 0.00 with it on, and 3 shortlist positions moved. |
+
+The pair is the point. Case 2 alone would show the audit fires; Case 1 alone would show it stays
+quiet. Only together do they show it fires *when and only when* there is something to find.
+
 **Not yet measured against a real model.** Those numbers are a stand-in proving the instrument
 works. Running it against a real provider is one command and produces `docs/BIAS_AUDIT.md`.
 
@@ -475,6 +489,54 @@ Three properties worth calling out:
   twenty-nine accepted and one rejected with a reason.
 - **Citations are re-verified at read time**, not trusted from the stored payload, and each one
   carries the rectangles to draw over the original PDF.
+
+## Three bugs worth reading about
+
+The pipeline was developed against Gemini. Running it against Groq as a second provider broke it
+in three different ways, and each failure was silent: the system produced confident, well-formed,
+completely wrong output while every quality metric read 100%.
+
+All three are fixed, tested, and worth describing, because the interesting part is not the fix but
+why nothing caught them.
+
+**1. The schema was never sent to the provider that needed it most.**
+
+Groq's API offers only "reply with valid JSON", no schema. So the model was inferring field names
+from prose, getting them wrong, and the repair loop was burning its attempts. It eventually
+settled on a sparse object that validated *because the missing fields had defaults*. The rubric
+compiled to eight requirements with zero must-haves, so every candidate trivially met all of them,
+and a strong candidate scored 0 out of 100.
+
+The fix renders the schema into the prompt as a field list with enum values. The deeper lesson is
+that adding defaults to make validation pass converts a loud failure into a silent one.
+
+**2. Grounding and citation validity are ratios, so they were perfect over an empty set.**
+
+The 0-out-of-100 report showed grounding 100%, citations valid 100%, agreement 100%. All true, and
+all meaningless: one claim was extracted and it was correctly cited. The metrics measure internal
+consistency and say nothing about coverage.
+
+Two absolute floors now sit alongside them. Extraction that yields almost nothing from a
+substantial document raises rather than scores, and a rubric with no must-haves from a posting
+that lists requirements gets one corrective retry before being rejected.
+
+**3. The rate limiter counted the wrong thing.**
+
+Groq meters *tokens* per minute, not requests. Pacing at a comfortable 25 requests a minute, each
+carrying about a thousand tokens, aims for 25,000 TPM against a 12,000 ceiling. Extraction calls
+exhausted their retries, a resume came back with almost no evidence, and the candidate was
+reported as a weak match. **A quota shortfall had turned into a hiring signal**, which is the exact
+failure class this project exists to prevent.
+
+The limiter now runs two leaky buckets and reserves token budget proportional to each request's
+estimated size.
+
+**And a fourth, found while fixing the third.** Responses that failed schema validation were being
+left in the cache. Since prompts are deterministic, the next run replayed the same malformed
+answer and failed identically, forever, long after the provider was healthy. Invalid responses are
+now evicted. The same investigation revealed that the test suite was reading the developer's local
+`.env`, so adding one line to it made 397 tests hang. Tests are now isolated by an autouse
+fixture.
 
 ## Deploying it
 

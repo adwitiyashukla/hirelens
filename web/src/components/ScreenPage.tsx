@@ -17,6 +17,7 @@ import type {
 } from "../api/types";
 import { useRunProgress } from "../hooks/useRunProgress";
 import { BandBadge, RateBadge, ScoreCell } from "./Badges";
+import { Alert, Check, initialsOf, Upload } from "./Icons";
 
 const SAMPLE_JD = `Senior Backend Engineer
 
@@ -78,9 +79,20 @@ export function ScreenPage({
       .catch((cause) =>
         setError(cause instanceof ApiError ? cause.message : String(cause)),
       );
+
+    // The rubric is compiled during the run, so this is the first moment it
+    // exists. Re-fetching here is what makes it appear beside the results,
+    // which is also where a reader wants it: the first question a low score
+    // prompts is "what did it think the job required?".
+    if (job) {
+      api
+        .getJob(job.id)
+        .then(setJob)
+        .catch(() => undefined);
+    }
   }, [finished, run?.id]);
 
-  const compile = async () => {
+  const saveJob = async () => {
     setError(null);
     setCompiling(true);
     try {
@@ -147,13 +159,21 @@ export function ScreenPage({
 
   return (
     <div className="page">
-      {error && <div className="banner error">{error}</div>}
+      {error && (
+        <div className="banner error">
+          <Alert />
+          <span>{error}</span>
+        </div>
+      )}
 
       <div className="columns">
         <div>
           <div className="card">
             <header>
-              <h2>1. Job description</h2>
+              <h2 className={`step ${job ? "done" : ""}`}>
+                <span className="num">{job ? <Check /> : "1"}</span>
+                Job description
+              </h2>
               <button
                 className="ghost"
                 onClick={() => {
@@ -166,8 +186,11 @@ export function ScreenPage({
             </header>
             <p className="hint">
               The description is compiled into weighted, atomic requirements
-              before any resume is read. Scoring against a rubric fixed in
-              advance is what keeps the comparison between candidates fair.
+              before any resume is read, and every candidate in the run is
+              scored against that one fixed rubric. Compiling per candidate
+              instead would give each a slightly different rubric and make the
+              scores incomparable. The compiled rubric appears here once the
+              first run has produced it.
             </p>
 
             <label className="field">
@@ -193,16 +216,19 @@ export function ScreenPage({
               <button
                 className="primary"
                 disabled={description.trim().length < 80 || compiling}
-                onClick={compile}
+                onClick={saveJob}
               >
                 {compiling ? (
                   <>
-                    <span className="spin" /> Compiling rubric
+                    <span className="spin" /> Saving
                   </>
                 ) : (
-                  "Compile rubric"
+                  "Save job description"
                 )}
               </button>
+              {job && !job.requirements.length && (
+                <span className="badge neutral">saved</span>
+              )}
               {description.trim().length > 0 && description.trim().length < 80 && (
                 <span className="hint" style={{ margin: 0 }}>
                   Needs at least 80 characters to compile a useful rubric
@@ -211,7 +237,13 @@ export function ScreenPage({
             </div>
           </div>
 
-          {job && (
+          {/*
+            Rendered only once requirements exist. The API compiles the rubric
+            lazily on the first run, so between saving the job and finishing a
+            run there is genuinely nothing to show, and an empty table with a
+            "0 points" badge reads like a failure rather than a pending step.
+          */}
+          {job && job.requirements.length > 0 && (
             <div className="card">
               <header>
                 <h2>Compiled rubric</h2>
@@ -254,7 +286,10 @@ export function ScreenPage({
         <div>
           <div className="card">
             <header>
-              <h2>2. Resumes</h2>
+              <h2 className={`step ${selected.size > 0 ? "done" : ""}`}>
+                <span className="num">{selected.size > 0 ? <Check /> : "2"}</span>
+                Resumes
+              </h2>
               <span className="tag">{selected.size} selected</span>
             </header>
 
@@ -274,10 +309,17 @@ export function ScreenPage({
             >
               {uploading ? (
                 <>
-                  <span className="spin" /> Extracting text
+                  <span className="spin" /> Extracting text and building the offset map
                 </>
               ) : (
-                <>Drop PDF, DOCX or TXT resumes here, or click to choose</>
+                <>
+                  <Upload className="icon" />
+                  <strong>Drop resumes here</strong>, or click to choose
+                  <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 4 }}>
+                    PDF, DOCX or TXT. Uploading the same file twice reuses the
+                    first one rather than creating a duplicate candidate.
+                  </div>
+                </>
               )}
               <input
                 ref={fileInput}
@@ -323,7 +365,10 @@ export function ScreenPage({
 
           <div className="card">
             <header>
-              <h2>3. Screen</h2>
+              <h2 className={`step ${entries.length > 0 ? "done" : ""}`}>
+                <span className="num">{entries.length > 0 ? <Check /> : "3"}</span>
+                Screen
+              </h2>
             </header>
             <label className="checkline">
               <input
@@ -354,7 +399,7 @@ export function ScreenPage({
 
             {progress && (
               <>
-                <div className="progress">
+                <div className={`progress ${running ? "live" : ""}`}>
                   <div style={{ width: `${total ? (done / total) * 100 : 0}%` }} />
                 </div>
                 <div className="row" style={{ justifyContent: "space-between" }}>
@@ -387,6 +432,57 @@ export function ScreenPage({
               Ranked by must-have compliance first, then score
             </span>
           </header>
+
+          {/*
+            The aggregate quality numbers sit above the ranking on purpose. They
+            answer "should I trust this table at all?", which has to be settled
+            before the ordering inside it means anything.
+          */}
+          <div className="metrics" style={{ marginBottom: 18 }}>
+            <div className="metric">
+              <div className="label">Screened</div>
+              <div className="value">{entries.length}</div>
+              <div className="note">
+                {entries.filter((e) => e.meets_must_haves).length} meet every must-have
+              </div>
+            </div>
+            <div className="metric">
+              <div className="label">Grounded</div>
+              <div className="value">
+                {(
+                  (entries.reduce((sum, e) => sum + e.grounding_rate, 0) /
+                    entries.length) *
+                  100
+                ).toFixed(0)}
+                %
+              </div>
+              <div className="note">claims carrying a citation</div>
+            </div>
+            <div className="metric">
+              <div className="label">Citations valid</div>
+              <div className="value">
+                {(
+                  (entries.reduce((sum, e) => sum + e.citation_validity_rate, 0) /
+                    entries.length) *
+                  100
+                ).toFixed(0)}
+                %
+              </div>
+              <div className="note">re-checked against the source</div>
+            </div>
+            <div className="metric">
+              <div className="label">Agreement</div>
+              <div className="value">
+                {(
+                  (entries.reduce((sum, e) => sum + e.mean_agreement, 0) /
+                    entries.length) *
+                  100
+                ).toFixed(0)}
+                %
+              </div>
+              <div className="note">across repeated samples</div>
+            </div>
+          </div>
           <table className="grid">
             <thead>
               <tr>
@@ -406,8 +502,20 @@ export function ScreenPage({
             <tbody>
               {entries.map((entry, index) => (
                 <tr key={entry.id} onClick={() => onOpenCandidate(entry.id)}>
-                  <td className="num">{index + 1}</td>
-                  <td>{entry.candidate_label}</td>
+                  <td>
+                    <span className={`rank ${index < 3 ? "top" : ""}`}>{index + 1}</span>
+                  </td>
+                  <td>
+                    <div className="who">
+                      <span className="disc">{initialsOf(entry.candidate_label)}</span>
+                      <span>
+                        <div className="name">{entry.candidate_label}</div>
+                        <div className="sub">
+                          {entry.elapsed_s.toFixed(1)}s to assess
+                        </div>
+                      </span>
+                    </div>
+                  </td>
                   <td>
                     <ScoreCell
                       score={entry.score}

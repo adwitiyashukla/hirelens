@@ -12,6 +12,15 @@ evals/reports/*.png
 uploads/
 *.sqlite
 *.db
+# SQLite's write-ahead log and shared-memory files. They sit beside the database
+# in WAL mode and are pure runtime state, but *.db does not match their names.
+*.db-shm
+*.db-wal
+*.sqlite-shm
+*.sqlite-wal
+
+# Scratch file used to pass a long commit message to `git commit -F`.
+COMMIT_MSG.tmp
 
 # python
 __pycache__/

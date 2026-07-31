@@ -6,6 +6,7 @@ these run in CI on every push.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -24,8 +25,12 @@ from hirelens.llm.base import (
     extract_json,
 )
 from hirelens.llm.cache import ResponseCache
-from hirelens.llm.client import LLMClient
-from hirelens.llm.providers import sanitize_schema_for_gemini
+from hirelens.llm.client import LLMClient, RateLimiter, estimate_tokens
+from hirelens.llm.providers import (
+    _describe_schema,
+    _with_schema_instruction,
+    sanitize_schema_for_gemini,
+)
 
 
 class FakeProvider(LLMProvider):
@@ -295,3 +300,256 @@ class TestGeminiSchemaSanitizer:
         cleaned = sanitize_schema_for_gemini(Outer.model_json_schema())
         assert cleaned["type"] == "object"
         assert set(cleaned["properties"]) == {"name", "nested", "optional_note"}
+
+
+class TestGroqSchemaInPrompt:
+    """Groq cannot be sent a schema, so it has to be told one in words.
+
+    These guard a bug that cost a full evening. Groq's endpoint accepts only
+    ``{"type": "json_object"}``, meaning "valid JSON, shape unspecified". The
+    model then guessed field names, the repair loop burned its attempts, and it
+    converged on a sparse object that validated because the absent fields had
+    defaults. A strong candidate scored 0 out of 100 while every quality metric
+    read 100%.
+    """
+
+    @staticmethod
+    def _schema() -> dict[str, object]:
+        class Inner(BaseModel):
+            label: str
+            weight: float = 1.0
+
+        class Outer(BaseModel):
+            name: str
+            kind: str = Field(json_schema_extra={"enum": ["must_have", "nice_to_have"]})
+            items: list[Inner]
+
+        return Outer.model_json_schema()
+
+    def test_field_names_and_types_reach_the_prompt(self) -> None:
+        described = "\n".join(_describe_schema(sanitize_schema_for_gemini(self._schema())))
+        assert '"name": string' in described
+        assert '"items": array of objects' in described
+
+    def test_nested_object_fields_are_described(self) -> None:
+        """The flattening of nested models was half the original failure."""
+        described = "\n".join(_describe_schema(sanitize_schema_for_gemini(self._schema())))
+        assert '"label"' in described
+        assert '"weight"' in described
+
+    def test_enum_values_are_listed(self) -> None:
+        """Exactly the failure that produced a rubric with no must-haves."""
+        described = "\n".join(_describe_schema(sanitize_schema_for_gemini(self._schema())))
+        assert "must_have" in described and "nice_to_have" in described
+
+    def test_optional_fields_are_marked(self) -> None:
+        described = "\n".join(_describe_schema(sanitize_schema_for_gemini(self._schema())))
+        assert "(optional)" in described
+
+    def test_instruction_is_appended_to_the_last_user_message(self) -> None:
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "score this"},
+        ]
+        updated = _with_schema_instruction(messages, self._schema())
+
+        assert len(updated) == 2
+        assert updated[0] == {"role": "system", "content": "sys"}
+        assert updated[1]["content"].startswith("score this")
+        assert '"name": string' in updated[1]["content"]
+
+    def test_original_messages_are_not_mutated(self) -> None:
+        messages = [{"role": "user", "content": "original"}]
+        _with_schema_instruction(messages, self._schema())
+        assert messages[0]["content"] == "original"
+
+    def test_repair_turn_still_gets_the_schema(self) -> None:
+        """The repair turn ends on a user message, so it must be the one patched."""
+        messages = [
+            {"role": "user", "content": "first ask"},
+            {"role": "assistant", "content": "{bad}"},
+            {"role": "user", "content": "that did not validate"},
+        ]
+        updated = _with_schema_instruction(messages, self._schema())
+
+        assert updated[0]["content"] == "first ask"
+        assert '"name": string' in updated[2]["content"]
+
+    def test_word_json_is_present_for_the_response_format(self) -> None:
+        """OpenAI-compatible json_object mode 400s unless the prompt says "json"."""
+        updated = _with_schema_instruction([{"role": "user", "content": "x"}], self._schema())
+        assert "JSON" in updated[0]["content"]
+
+    def test_empty_schema_leaves_the_prompt_alone(self) -> None:
+        messages = [{"role": "user", "content": "x"}]
+        assert _with_schema_instruction(messages, {"type": "object"}) == messages
+
+
+class TestTokenAwarePacing:
+    """The binding quota on some providers is tokens, not requests.
+
+    Written after a real failure. Pacing at 25 requests/minute against Groq's
+    12,000 tokens/minute ceiling aims for roughly 25,000 TPM. Half the calls
+    were rejected, extraction exhausted its retries, and a strong candidate came
+    back with one evidence unit and was reported as a weak match. A quota
+    shortfall had turned into a hiring signal, which is the exact failure class
+    this project exists to prevent.
+    """
+
+    def test_estimate_counts_prompt_and_completion(self) -> None:
+        request = CompletionRequest(messages=(Message.user("x" * 3600),), max_tokens=500)
+        # 3600 chars / 3.6 = 1000 prompt tokens, plus the explicit completion.
+        assert estimate_tokens(request) == 1500
+
+    def test_estimate_assumes_a_completion_when_max_tokens_is_unset(self) -> None:
+        """Quotas count output too, so assuming zero would under-pace badly."""
+        request = CompletionRequest(messages=(Message.user("x" * 360),))
+        assert estimate_tokens(request) > 100
+
+    def test_estimate_includes_every_message(self) -> None:
+        """The repair turn resends the whole conversation, so it costs more."""
+        one = CompletionRequest(messages=(Message.user("x" * 360),), max_tokens=10)
+        three = CompletionRequest(
+            messages=(
+                Message.system("x" * 360),
+                Message.user("x" * 360),
+                Message.assistant("x" * 360),
+            ),
+            max_tokens=10,
+        )
+        assert estimate_tokens(three) > estimate_tokens(one) * 2
+
+    def test_a_token_only_limiter_is_enabled(self) -> None:
+        assert RateLimiter(requests_per_minute=0, tokens_per_minute=9000).enabled
+
+    def test_both_quotas_off_means_no_pacing(self) -> None:
+        assert not RateLimiter(requests_per_minute=0, tokens_per_minute=0).enabled
+
+    def test_large_requests_reserve_proportionally_more_quota(self) -> None:
+        """A 2000-token call must consume twice the minute a 1000-token one does."""
+        limiter = RateLimiter(requests_per_minute=0, tokens_per_minute=6000)
+        # 6000 tokens per 60s is 0.01 seconds of quota per token.
+        assert limiter.seconds_per_token == pytest.approx(0.01)
+
+    async def test_token_pacing_actually_delays(self) -> None:
+        """The reservation has to produce real waiting, not just bookkeeping.
+
+        Scaled so the whole test costs a fraction of a second. A version of this
+        that paced at a realistic 9,000 tokens/minute would need to sleep for
+        twenty seconds to prove the same property, and a test suite nobody wants
+        to run is a test suite that stops being run.
+        """
+        # 600k tokens/minute is 10,000 per second, so 2,000 tokens costs 0.2s.
+        limiter = RateLimiter(requests_per_minute=0, tokens_per_minute=600_000)
+        loop = asyncio.get_running_loop()
+
+        started = loop.time()
+        for _ in range(3):
+            await limiter.acquire(estimated_tokens=2_000)
+        elapsed = loop.time() - started
+
+        # The first call reserves but does not wait, leaving two waits of 0.2s.
+        assert elapsed >= 0.3
+
+    async def test_a_token_quota_breach_names_the_right_setting(self, tmp_path: Path) -> None:
+        """The previous message blamed the daily limit for every persistent 429.
+
+        Someone following that advice would wait 24 hours for a problem that one
+        setting fixes in a second.
+        """
+        provider = FakeProvider(
+            [
+                RateLimitError(
+                    "Rate limit reached for model in organization on tokens per minute "
+                    "(TPM): Limit 12000, Used 11172",
+                    retry_after_s=0.001,
+                )
+            ]
+            * 5
+        )
+        settings = make_settings(tmp_path, max_retries=1, requests_per_minute=25)
+        client = LLMClient(provider, settings=settings)
+
+        with pytest.raises(Exception, match="HIRELENS_TOKENS_PER_MINUTE"):
+            await client.complete(CompletionRequest(messages=(Message.user("x"),)))
+
+    async def test_a_request_quota_breach_still_reports_a_daily_cap(self, tmp_path: Path) -> None:
+        provider = FakeProvider([RateLimitError("429 quota exceeded", retry_after_s=0.001)] * 5)
+        settings = make_settings(tmp_path, max_retries=1, requests_per_minute=6000)
+        client = LLMClient(provider, settings=settings)
+
+        with pytest.raises(Exception, match="DAILY"):
+            await client.complete(CompletionRequest(messages=(Message.user("x"),)))
+
+
+class TestBadResponsesAreNotCached:
+    """A response that fails validation must not survive in the cache.
+
+    Found the hard way. A rate-limited run cached some malformed extraction
+    responses. Every later run for that resume then replayed them, produced
+    almost no evidence, and reported a strong candidate as a weak match. There
+    was no error to see: the prompt was deterministic, so the failure was
+    perfectly reproducible and looked like a considered judgement.
+    """
+
+    async def test_a_failing_response_is_evicted(self, tmp_path: Path) -> None:
+        provider = FakeProvider(
+            [
+                '{"score": 99, "rationale": "out of range"}',  # violates le=10
+                '{"score": 8, "rationale": "corrected"}',
+            ]
+        )
+        client = LLMClient(provider, settings=make_settings(tmp_path))
+
+        result = await client.structured(Assessment, user="score this")
+        assert result.score == 8
+
+        # The first, invalid response must be gone. If it were still cached, a
+        # fresh client would replay it and fail forever.
+        first_request = CompletionRequest(
+            messages=(Message.user("score this"),),
+            temperature=client.settings.extraction_temperature,
+            json_schema=Assessment.model_json_schema(),
+        )
+        assert client.cache.get(first_request, provider.model) is None
+
+    async def test_a_second_run_recovers_instead_of_replaying_the_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """The property that actually matters: the bug does not become permanent."""
+        settings = make_settings(tmp_path)
+
+        first = FakeProvider(['{"score": 99, "rationale": "bad"}'] * 4)
+        with pytest.raises(InvalidResponseError):
+            await LLMClient(first, settings=settings).structured(
+                Assessment, user="score this", max_repair_attempts=1
+            )
+
+        # A new client, same cache directory, same prompt, healthy provider.
+        second = FakeProvider(['{"score": 7, "rationale": "fine"}'])
+        result = await LLMClient(second, settings=settings).structured(
+            Assessment, user="score this"
+        )
+
+        assert result.score == 7
+        assert len(second.calls) == 1, "the poisoned entry was replayed instead of refetched"
+
+    async def test_valid_responses_are_still_cached(self, tmp_path: Path) -> None:
+        """Eviction must not turn into "never cache anything"."""
+        provider = FakeProvider(['{"score": 5, "rationale": "ok"}'])
+        settings = make_settings(tmp_path)
+
+        await LLMClient(provider, settings=settings).structured(Assessment, user="x")
+        second = FakeProvider(['{"score": 1, "rationale": "should not be reached"}'])
+        result = await LLMClient(second, settings=settings).structured(Assessment, user="x")
+
+        assert result.score == 5
+        assert second.calls == []
+
+    def test_evicting_a_missing_entry_is_harmless(self, tmp_path: Path) -> None:
+        cache = ResponseCache(tmp_path / "c")
+        assert cache.evict(CompletionRequest(messages=(Message.user("x"),)), "m") is False
+
+    def test_a_disabled_cache_evicts_nothing(self, tmp_path: Path) -> None:
+        cache = ResponseCache(tmp_path / "c", enabled=False)
+        assert cache.evict(CompletionRequest(messages=(Message.user("x"),)), "m") is False

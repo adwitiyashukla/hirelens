@@ -114,10 +114,10 @@ def models() -> None:
     """
     settings = get_settings()
 
-    if settings.llm_provider is not Provider.GEMINI:
+    if settings.llm_provider is Provider.OLLAMA:
         console.print(
-            f"[yellow]Model listing is implemented for Gemini only. "
-            f"Current provider is '{settings.llm_provider}'.[/yellow]"
+            "[yellow]Ollama serves whatever you have pulled locally. "
+            "Run `ollama list` to see it.[/yellow]"
         )
         raise typer.Exit(code=1)
 
@@ -125,7 +125,14 @@ def models() -> None:
         console.print("[red]No API key configured. Add one to your .env file.[/red]")
         raise typer.Exit(code=1)
 
-    available = asyncio.run(_list_gemini_models(settings.gemini_api_key))
+    is_gemini = settings.llm_provider is Provider.GEMINI
+    if is_gemini:
+        available = asyncio.run(_list_gemini_models(settings.gemini_api_key))
+        env_var, highlight_token = "HIRELENS_GEMINI_MODEL", "flash"
+    else:
+        available = asyncio.run(_list_groq_models(settings.groq_api_key))
+        env_var, highlight_token = "HIRELENS_GROQ_MODEL", "llama"
+
     if not available:
         console.print("[red]No usable models returned. Check the key is valid.[/red]")
         raise typer.Exit(code=1)
@@ -134,16 +141,16 @@ def models() -> None:
     table.add_column("model name")
     table.add_column("description", style="dim")
     for name, description in available:
-        highlight = "[green]" if "flash" in name else ""
+        highlight = "[green]" if highlight_token in name else ""
         table.add_row(f"{highlight}{name}", description[:60])
     console.print(table)
 
-    suggested = _suggest_model([name for name, _ in available])
+    names = [name for name, _ in available]
+    suggested = _suggest_model(names) if is_gemini else _suggest_groq_model(names)
     if suggested:
         console.print(
             Panel(
-                f"Put this line in your .env file:\n\n"
-                f"  [cyan]HIRELENS_GEMINI_MODEL={suggested}[/cyan]",
+                f"Put this line in your .env file:\n\n  [cyan]{env_var}={suggested}[/cyan]",
                 title="Recommended",
                 border_style="green",
             )
@@ -172,6 +179,60 @@ async def _list_gemini_models(api_key: str) -> list[tuple[str, str]]:
         # listing them would just invite a second confusing failure.
         if "generateContent" in entry.get("supportedGenerationMethods", [])
     ]
+
+
+async def _list_groq_models(api_key: str) -> list[tuple[str, str]]:
+    """Groq's catalogue, via its OpenAI-compatible models endpoint.
+
+    Groq retires model names on roughly the same cadence as Google, and the
+    resulting failure is equally opaque: a 404 that looks like a bad key. Same
+    command, same fix, one fewer confusing evening.
+    """
+    import httpx
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            "https://api.groq.com/openai/v1/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+    models: list[tuple[str, str]] = []
+    for entry in payload.get("data", []):
+        name = entry.get("id", "")
+        if not name:
+            continue
+        # Whisper is speech to text and the guard models only classify content,
+        # so neither can answer a judging prompt. Listing them would just invite
+        # a second confusing failure.
+        if any(token in name.lower() for token in ("whisper", "guard", "tts")):
+            continue
+        window = entry.get("context_window")
+        owner = entry.get("owned_by", "")
+        detail = f"{owner}, {window:,} token context" if window else owner
+        models.append((name, detail))
+
+    return sorted(models)
+
+
+def _suggest_groq_model(names: list[str]) -> str | None:
+    """Prefer a large, general instruction-tuned model.
+
+    The judging stage is where reasoning quality shows up most directly, so the
+    bigger model is worth the slower tokens. Groq is fast enough that "slower"
+    is still faster than most alternatives.
+    """
+    preferred = [
+        name
+        for name in names
+        if "llama" in name.lower() and any(token in name for token in ("70b", "versatile"))
+    ]
+    if preferred:
+        return preferred[0]
+
+    instruct = [name for name in names if "instruct" in name.lower() or "llama" in name.lower()]
+    return instruct[0] if instruct else (names[0] if names else None)
 
 
 def _suggest_model(names: list[str]) -> str | None:

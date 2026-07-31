@@ -117,6 +117,34 @@ class ResponseCache:
             logger.warning("could not write cache entry: %s", exc)
             tmp.unlink(missing_ok=True)
 
+    def evict(self, request: CompletionRequest, model: str) -> bool:
+        """Forget one entry. Returns whether anything was removed.
+
+        Exists because caching a response that later fails schema validation
+        makes the failure permanent. The prompt is deterministic, so the next
+        run hits the same entry, gets the same malformed answer, and fails
+        identically. The repair loop cannot help: it is being handed the same
+        bad output every time.
+
+        This was not theoretical. A rate-limited run cached some malformed
+        extraction responses, and from then on that resume produced almost no
+        evidence on every subsequent run, including runs where the provider was
+        healthy. The only symptom visible to a user was a strong candidate being
+        reported as a weak match, with no error anywhere.
+        """
+        if not self.enabled:
+            return False
+
+        path = self._path_for(self.key_for(request, model))
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            logger.warning("could not evict cache entry: %s", exc)
+            return False
+        return True
+
     # -- reporting -----------------------------------------------------------
 
     @property

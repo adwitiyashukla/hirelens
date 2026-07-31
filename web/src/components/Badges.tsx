@@ -15,11 +15,19 @@ const VERDICT_LABEL: Record<Verdict, string> = {
   none: "No evidence",
 };
 
-const BAND_LABEL: Record<Band, string> = {
-  strong: "Strong fit",
-  promising: "Promising",
-  borderline: "Borderline",
-  weak: "Weak fit",
+/**
+ * Bands arrive as display text, so only the colour is decided here.
+ *
+ * `missing a must-have` is styled as a warning rather than as a low score,
+ * because it is a different kind of statement: it says the candidate is out on
+ * a hard filter, not that they scored badly.
+ */
+const BAND_TONE: Record<Band, string> = {
+  "strong fit": "strong",
+  "possible fit": "clear",
+  "weak fit": "weak",
+  "not a fit": "none",
+  "missing a must-have": "danger",
 };
 
 export function VerdictBadge({ verdict }: { verdict: Verdict }) {
@@ -27,7 +35,9 @@ export function VerdictBadge({ verdict }: { verdict: Verdict }) {
 }
 
 export function BandBadge({ band }: { band: Band }) {
-  return <span className={`badge ${band}`}>{BAND_LABEL[band]}</span>;
+  // Falls back to a neutral tone rather than an empty class, so an unrecognised
+  // band still renders its text instead of vanishing.
+  return <span className={`badge ${BAND_TONE[band] ?? "neutral"}`}>{band}</span>;
 }
 
 /**

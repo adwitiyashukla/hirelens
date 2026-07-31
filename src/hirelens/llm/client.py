@@ -44,42 +44,87 @@ TModel = TypeVar("TModel", bound=BaseModel)
 _RETRYABLE = (RateLimitError, TransientProviderError)
 
 
+#: Characters per token. Deliberately conservative: English averages closer to
+#: 4.0, and underestimating the cost of a request is what trips the quota, so
+#: the error is biased towards pacing slightly too slowly.
+_CHARS_PER_TOKEN = 3.6
+
+#: Assumed completion length when a request sets no explicit ``max_tokens``.
+#: Quotas count output tokens too, and a judging reply with reasoning is not
+#: small.
+_ASSUMED_COMPLETION_TOKENS = 700
+
+
+def estimate_tokens(request: CompletionRequest) -> int:
+    """Rough token cost of a request, prompt plus expected completion.
+
+    A character heuristic rather than a real tokeniser. Importing ``tiktoken``
+    for this would add a dependency and would still be wrong, since it does not
+    match Llama's or Gemini's vocabularies. The number only has to be good
+    enough to pace against, and being systematically a little high is the safe
+    direction to be wrong in.
+    """
+    prompt_chars = sum(len(message.content) for message in request.messages)
+    prompt_tokens = int(prompt_chars / _CHARS_PER_TOKEN)
+    completion_tokens = request.max_tokens or _ASSUMED_COMPLETION_TOKENS
+    return prompt_tokens + completion_tokens
+
+
 class RateLimiter:
-    """Paces outgoing requests to stay under a per-minute quota.
+    """Paces outgoing traffic against both a request and a token quota.
 
-    A simple leaky bucket: each request waits until at least ``interval`` seconds
-    have passed since the previous one started. Not a token bucket, deliberately,
-    because a token bucket permits an initial burst and the burst is exactly what
-    trips a per-minute quota when a run fans out twenty judge calls at once.
+    Two leaky buckets, because providers meter differently and the binding
+    constraint is whichever runs out first.
 
-    This exists because retrying into a rate limit does not work. The backoff
-    eventually runs out of attempts, the requirement is recorded as "judging
-    failed", and that is indistinguishable in the final report from "no evidence
-    found". A candidate can lose points to a quota. Pacing makes the run slower
-    and correct instead.
+    Gemini's free tier caps requests per minute. Groq's caps *tokens* per minute
+    (12,000 on the free tier at the time of writing), and a request-based
+    limiter is structurally blind to that: pacing at a comfortable 25 requests a
+    minute, each carrying about a thousand tokens, aims for 25,000 TPM against a
+    12,000 ceiling and fails roughly half of them. That is exactly what happened
+    here, and the symptom was not an obvious rate-limit error. Extraction calls
+    exhausted their retries, a resume came back with almost no evidence, and the
+    candidate was reported as a weak match. A quota shortfall had turned into a
+    hiring signal.
+
+    Leaky buckets rather than token buckets, deliberately: a token bucket
+    permits an initial burst, and the burst is exactly what trips a per-minute
+    quota when a run fans out twenty judge calls at once.
     """
 
-    def __init__(self, requests_per_minute: int) -> None:
-        self.interval = 60.0 / requests_per_minute if requests_per_minute > 0 else 0.0
+    def __init__(self, requests_per_minute: int, tokens_per_minute: int = 0) -> None:
+        self.request_interval = 60.0 / requests_per_minute if requests_per_minute > 0 else 0.0
+        # Seconds of quota consumed per token, so a request's share of the
+        # minute scales with how large it actually is.
+        self.seconds_per_token = 60.0 / tokens_per_minute if tokens_per_minute > 0 else 0.0
         self._lock = asyncio.Lock()
-        self._next_slot = 0.0
+        self._next_request_slot = 0.0
+        self._next_token_slot = 0.0
 
     @property
     def enabled(self) -> bool:
-        return self.interval > 0.0
+        return self.request_interval > 0.0 or self.seconds_per_token > 0.0
 
-    async def acquire(self) -> None:
+    async def acquire(self, estimated_tokens: int = 0) -> None:
+        """Wait until both quotas allow this request, then reserve its share."""
         if not self.enabled:
             return
 
         async with self._lock:
             now = asyncio.get_running_loop().time()
-            wait = max(0.0, self._next_slot - now)
-            # Reserve the slot before releasing the lock, so concurrent callers
-            # queue up behind each other rather than all reading the same "now".
-            self._next_slot = max(now, self._next_slot) + self.interval
+            wait = 0.0
 
-        if wait:
+            if self.request_interval > 0.0:
+                wait = max(wait, self._next_request_slot - now)
+                # Reserve before releasing the lock, so concurrent callers queue
+                # behind each other rather than all reading the same "now".
+                self._next_request_slot = max(now, self._next_request_slot) + self.request_interval
+
+            if self.seconds_per_token > 0.0 and estimated_tokens > 0:
+                wait = max(wait, self._next_token_slot - now)
+                cost = estimated_tokens * self.seconds_per_token
+                self._next_token_slot = max(now, self._next_token_slot) + cost
+
+        if wait > 0:
             await asyncio.sleep(wait)
 
 
@@ -137,7 +182,9 @@ class LLMClient:
             self.settings.cache_dir, enabled=self.settings.cache_enabled
         )
         self._semaphore = asyncio.Semaphore(self.settings.max_concurrent_requests)
-        self._rate_limiter = RateLimiter(self.settings.requests_per_minute)
+        self._rate_limiter = RateLimiter(
+            self.settings.requests_per_minute, self.settings.tokens_per_minute
+        )
         self.call_count = 0
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
@@ -153,7 +200,7 @@ class LLMClient:
         async with self._semaphore:
             # Pace before the call, not after a 429. Cache hits above never reach
             # here, so a warm cache costs nothing in wall-clock time.
-            await self._rate_limiter.acquire()
+            await self._rate_limiter.acquire(estimate_tokens(request))
             response = await self._complete_with_retries(request)
 
         self.cache.put(request, self.provider.model, response)
@@ -199,11 +246,33 @@ class LLMClient:
         # confusing wall of 429s into a clear "come back tomorrow", instead of
         # sending someone off to tune settings that cannot help.
         if isinstance(last_error, RateLimitError) and self._rate_limiter.enabled:
+            detail = str(last_error).lower()
+
+            # Distinguish the two quotas by what the provider actually said.
+            # Getting this wrong sends someone off to tune a number that cannot
+            # possibly help, which is precisely what the previous version of
+            # this message did: it asserted "daily limit" for every persistent
+            # 429, including token-per-minute breaches that were entirely
+            # fixable by setting HIRELENS_TOKENS_PER_MINUTE.
+            if "tokens per minute" in detail or "tpm" in detail:
+                raise LLMError(
+                    f"Rate limited on the provider's TOKENS-per-minute quota, not its "
+                    f"request quota. Pacing is currently set by requests "
+                    f"({self.settings.requests_per_minute}/minute) and "
+                    f"tokens ({self.settings.tokens_per_minute or 'unset'}/minute).\n\n"
+                    f"A request limit cannot control this: each call carries roughly a "
+                    f"thousand tokens, so a comfortable request rate can still be several "
+                    f"times over the token ceiling.\n\n"
+                    f"Set HIRELENS_TOKENS_PER_MINUTE to just under your provider's limit "
+                    f"(Groq's free tier is 12000, so 9000 is a safe value).\n\n"
+                    f"Original error: {last_error}"
+                ) from last_error
+
             raise LLMError(
                 f"Rate limited on every attempt despite pacing at "
                 f"{self.settings.requests_per_minute} requests/minute. That rules out the "
-                f"per-minute quota, so this is almost certainly the provider's DAILY free-tier "
-                f"limit, which resets every 24 hours.\n\n"
+                f"per-minute request quota, so this is almost certainly the provider's DAILY "
+                f"free-tier limit, which resets every 24 hours.\n\n"
                 f"Options: wait for the reset, switch to a local model with "
                 f"HIRELENS_LLM_PROVIDER=ollama, or use a second free provider with "
                 f"HIRELENS_LLM_PROVIDER=groq.\n\n"
@@ -273,19 +342,24 @@ class LLMClient:
         last_error = ""
 
         for attempt in range(max_repair_attempts + 1):
-            response = await self.complete(
-                CompletionRequest(
-                    messages=tuple(messages),
-                    # Nudge the temperature up on a retry: a deterministic decode
-                    # that produced invalid JSON will reproduce it exactly.
-                    temperature=temp if attempt == 0 else max(temp, 0.2),
-                    json_schema=schema,
-                )
+            request = CompletionRequest(
+                messages=tuple(messages),
+                # Nudge the temperature up on a retry: a deterministic decode
+                # that produced invalid JSON will reproduce it exactly.
+                temperature=temp if attempt == 0 else max(temp, 0.2),
+                json_schema=schema,
             )
+            response = await self.complete(request)
 
             try:
                 return model.model_validate(response.json())
             except (ValidationError, ValueError) as exc:
+                # Never leave a response that failed validation in the cache.
+                # The prompt is deterministic, so keeping it would hand the same
+                # malformed answer to every future run and make the failure
+                # permanent, including long after whatever caused it is gone.
+                self.cache.evict(request, self.provider.model)
+
                 last_error = str(exc)[:1500]
                 if attempt == max_repair_attempts:
                     break

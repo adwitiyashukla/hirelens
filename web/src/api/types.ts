@@ -9,7 +9,22 @@
  */
 
 export type Verdict = "strong" | "clear" | "partial" | "weak" | "none";
-export type Band = "strong" | "promising" | "borderline" | "weak";
+
+/**
+ * The exact strings `CandidateAssessment.band` returns.
+ *
+ * These are already display text, so the frontend renders them rather than
+ * translating them. An earlier version of this file declared a different
+ * vocabulary invented here, the label lookup missed on every value, and the
+ * band column rendered as an empty pill. Typing it against the source is what
+ * turns that into a build error instead of a blank cell.
+ */
+export type Band =
+  | "strong fit"
+  | "possible fit"
+  | "weak fit"
+  | "not a fit"
+  | "missing a must-have";
 export type RunStatus = "queued" | "running" | "completed" | "failed";
 export type RiskLevel = "info" | "warning" | "high";
 export type RequirementKind = "must_have" | "nice_to_have";

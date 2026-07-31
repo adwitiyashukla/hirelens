@@ -1,76 +1,98 @@
 # Screenshots
 
-The README links to five images from this folder. They are not committed yet, because a
-screenshot of a run that has not happened would be a mockup, and the whole argument of this
-project is that a claim without evidence behind it is worth nothing.
+The README links to five images from this folder. They are not committed until a
+real run has produced them, because a screenshot of a run that has not happened
+is a mockup, and the argument of this project is that a claim without evidence
+behind it is worth nothing.
 
-Take them once, after a real run against a live provider, then paste the markdown block at the
-bottom of this file into the README where the HTML comment marks the spot.
+## The demo inputs
 
-## Before you start
+`make demo-set` renders four synthetic backend candidates as PDFs into
+`samples/demo_candidates/`, plus the job description they are graded against:
 
-```bash
-make web-build                 # compile the dashboard
-make api                       # serve it on http://localhost:8000
+| File | Golden-set quality | What it contributes to the shortlist |
+|---|---|---|
+| `alex_mercer.pdf` | strong | top of the ranking, most requirements met |
+| `priya_raman.pdf` | solid | close behind, so the intervals overlap |
+| `jordan_blake.pdf` | mixed | middle, with disagreement across samples |
+| `sam_okafor.pdf` | weak | bottom, and misses a must-have |
+
+Synthetic on purpose. A real person's employment history in a public repository
+would be a privacy incident on a project that argues for careful handling of
+candidate data.
+
+## Order matters, because the free tier has a daily cap
+
+Take them in this order. It is not arbitrary.
+
+1. **`audit.png` first.** Needs no API key at all, so it can never be blocked.
+2. **`cli.png` second**, on one candidate. About 32 calls. If anything in the
+   pipeline is broken, you find out cheaply rather than 125 calls in.
+3. **`shortlist.png`, `evidence.png`, `progress.png` last**, from one dashboard
+   run over all four candidates. Roughly 94 further calls, because candidate one
+   is already in the response cache from step 2. Use the **same** job description
+   in both steps or that saving disappears.
+
+***
+
+## 1. `audit.png`: the bias audit catching injected bias
+
+```powershell
+python scripts/smoke_audit.py
 ```
 
-Open `http://localhost:8000`. Set your browser window to roughly 1440 x 900 and use a light-free
-desktop background, so the dark interface is the only thing in the frame. Crop to the browser
-content area, without the URL bar or bookmarks.
+Capture the second case, the one rigged to reward elite institutions, with both
+tables visible: blind mode clean, sighted mode over threshold. It proves the
+instrument detects bias that is definitely there, which is the only thing that
+makes a clean report on the real model meaningful.
 
-## The five captures
+## 2. `cli.png`: the terminal report
 
-### 1. `shortlist.png`: the ranked table
-
-Screen three or four candidates against one job description. Capture the shortlist with the
-confidence bars visible.
-
-What this has to show: several candidates, at least one confidence interval overlapping another,
-and at least one candidate marked as missing a must-have. Overlapping intervals are the point.
-A table where every candidate is cleanly separated makes the honest argument invisible.
-
-### 2. `evidence.png`: evidence highlighting
-
-Open a candidate, select one requirement, and capture both panes together: the requirement
-selected on the left, its evidence highlighted and everything else dimmed on the right.
-
-This is the one screenshot that has to be right. It is the difference between this project and
-every other resume screener on GitHub.
-
-### 3. `progress.png`: a run in flight
-
-Start a run and capture while the progress bar is partway through, with the stage label visible
-("judging requirements", "extracting", and so on). Timing it is fiddly; taking a burst of
-screenshots and picking one is easier than trying to catch it.
-
-### 4. `cli.png`: the terminal output
-
-```bash
-hirelens score samples\priya_narayanan.pdf --jd samples\senior_backend_engineer.txt
+```powershell
+hirelens score samples\demo_candidates\alex_mercer.pdf --jd samples\senior_backend_engineer_golden.txt
 ```
 
-Capture the whole report: score with band, per-requirement verdicts with evidence, risk flags,
-interview questions. Some recruiters read the terminal output and skip the interface entirely.
+Capture the whole report: score with band, per-requirement verdicts with the
+evidence quoted underneath, risk flags, interview questions. Some readers never
+open the interface.
 
-### 5. `audit.png`: the bias audit catching injected bias
+## 3. `shortlist.png`: the ranked table
 
-```bash
-make audit-smoke
-```
+Screen all four candidates against the same job description, then capture the
+shortlist with the confidence bars visible.
 
-Capture the second case, the one rigged to reward elite institutions, with both tables visible:
-blind mode clean, sighted mode over threshold. This needs no API key, so it can be taken at any
-time.
+What this has to show: several candidates, **at least one confidence interval
+overlapping another**, and at least one candidate marked as missing a must-have.
+The overlap is the point. A table where every candidate is cleanly separated
+hides the honest argument.
+
+## 4. `evidence.png`: evidence highlighting
+
+Open a candidate, select one requirement, and capture both panes together: the
+requirement selected on the left, its evidence highlighted and everything else
+dimmed on the right.
+
+This is the one screenshot that has to be right. It is the difference between
+this project and every other resume screener on GitHub.
+
+## 5. `progress.png`: a run in flight
+
+Capture while the progress bar is partway through, with the stage label visible
+("judging requirements", "extracting", and so on). At the paced request rate the
+run takes minutes, so there is plenty of time. Take a burst and pick one.
+
+***
 
 ## What to avoid
 
-- **No real resumes.** Use `samples/` or the golden set. A screenshot of a real person's
-  employment history in a public repository is a privacy incident, and on a project that argues
-  for careful handling of candidate data it would undermine the entire premise.
-- **No API keys in frame.** Check the terminal scrollback before capturing, and check the
-  browser's network tab is closed.
-- **No cropped confidence intervals.** If the bands are cut off, the screenshot shows a ranking
-  and hides the uncertainty, which inverts the message.
+- **No API keys in frame.** Check the terminal scrollback before capturing, and
+  make sure the browser network tab is closed.
+- **No cropped confidence intervals.** If the bands are cut off, the screenshot
+  shows a ranking and hides the uncertainty, which inverts the message.
+- **No `.env` file open in another visible window.**
+
+Set the browser to roughly 1440 x 900 and crop to the page content, without the
+URL bar or bookmarks.
 
 ## Paste this into the README
 

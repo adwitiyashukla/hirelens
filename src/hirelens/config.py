@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     #: rather than fast and wrong.
     #:
     #: Set to 0 to disable pacing entirely.
+    #: Token quota, which is what Groq actually meters (12,000/minute free).
+    #: Zero disables token pacing. Setting only ``requests_per_minute`` against a
+    #: token-metered provider silently fails half the calls in a large run.
+    tokens_per_minute: int = Field(default=0, ge=0, le=10_000_000)
+
     requests_per_minute: int = Field(default=15, ge=0, le=10_000)
 
     # ---- caching -----------------------------------------------------------

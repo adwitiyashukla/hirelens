@@ -8,10 +8,16 @@ from pathlib import Path
 import pytest
 
 from hirelens.assess.judge import RequirementJudge, build_prompt
-from hirelens.assess.pipeline import ScreeningPipeline, rank
+from hirelens.assess.pipeline import (
+    ScreeningPipeline,
+    _reject_degenerate_extraction,
+    rank,
+)
 from hirelens.assess.questions import collect_gaps
 from hirelens.assess.risks import detect_risks, parse_month_index
+from hirelens.assess.rubric import RubricCompiler
 from hirelens.config import Provider, Settings
+from hirelens.ingest.document import SourceDocument
 from hirelens.llm.base import CompletionRequest, CompletionResponse, LLMProvider, Usage
 from hirelens.llm.client import LLMClient
 from hirelens.retrieve.embeddings import HashingEmbedder
@@ -27,6 +33,7 @@ from hirelens.schemas.evidence import Citation, Cited, EvidenceUnit, Span
 from hirelens.schemas.job import (
     RawRequirement,
     RawRubric,
+    Requirement,
     RequirementCategory,
     RequirementKind,
     Rubric,
@@ -816,3 +823,109 @@ class TestScreeningPipeline:
         assert results[0].elapsed_s >= 0.0
         assert results[0].llm_usage["api_calls"] > 0
         assert results[0].evidence_unit_count > 0
+
+
+class TestDegenerateOutputIsRejected:
+    """The pipeline must refuse to score when a stage returned nothing usable.
+
+    Both guards were written after a real incident. Swapping to a provider that
+    cannot be sent a response schema produced a rubric with zero must-haves and
+    an extraction with one evidence unit from an 1100-character resume. The
+    pipeline reported 0 out of 100 with grounding 100%, citations valid 100% and
+    agreement 100%.
+
+    Those metrics are ratios, so they measure internal consistency and are
+    trivially perfect over an almost empty set. Absolute floors are what was
+    missing.
+    """
+
+    JD = (
+        "Senior Backend Engineer\n\n"
+        "Requirements\n"
+        "- Strong experience running containerised workloads in production\n"
+        "- Experience with high-throughput event streaming such as Kafka\n"
+        "- A track record of measurably improving system performance\n"
+    )
+
+    @staticmethod
+    def _rubric(kinds: list[RequirementKind]) -> Rubric:
+        return Rubric(
+            rubric_id="r1",
+            role_title="Senior Backend Engineer",
+            seniority="senior",
+            requirements=[
+                Requirement(
+                    requirement_id=f"q{index}",
+                    text=f"requirement {index}",
+                    kind=kind,
+                    category=RequirementCategory.EXPERIENCE,
+                    weight=100 / max(len(kinds), 1),
+                    evidence_hint="hint",
+                )
+                for index, kind in enumerate(kinds)
+            ],
+        )
+
+    def test_rubric_with_no_must_haves_is_flagged(self) -> None:
+        rubric = self._rubric([RequirementKind.NICE_TO_HAVE] * 8)
+        assert "not one must-have" in RubricCompiler._degeneracy(rubric, self.JD)
+
+    def test_a_normal_rubric_is_clean(self) -> None:
+        rubric = self._rubric([RequirementKind.MUST_HAVE] * 3 + [RequirementKind.NICE_TO_HAVE] * 2)
+        assert RubricCompiler._degeneracy(rubric, self.JD) == ""
+
+    def test_a_posting_with_no_stated_requirements_may_have_no_must_haves(self) -> None:
+        """Not every posting has hard requirements, and inventing them is worse."""
+        casual = "We are looking for someone to help with our backend. Come talk to us."
+        rubric = self._rubric([RequirementKind.NICE_TO_HAVE] * 3)
+        assert RubricCompiler._degeneracy(rubric, casual) == ""
+
+    def test_the_message_reads_as_a_correction_to_the_model(self) -> None:
+        """It is fed straight back into the retry prompt, so it must be an instruction.
+
+        Environment-variable advice belongs in the final error a person reads,
+        not in a correction addressed to a model that cannot act on it.
+        """
+        message = RubricCompiler._degeneracy(
+            self._rubric([RequirementKind.NICE_TO_HAVE] * 8), self.JD
+        )
+        assert "8 requirements" in message
+        assert "HIRELENS_" not in message
+
+    def test_an_empty_rubric_cannot_even_be_constructed(self) -> None:
+        """The schema catches this one first, so the guard never sees it."""
+        with pytest.raises(ValueError, match="at least one requirement"):
+            self._rubric([])
+
+    # -- extraction ---------------------------------------------------------
+
+    @staticmethod
+    def _document(length: int) -> SourceDocument:
+        return SourceDocument(
+            document_id="d1",
+            filename="cv.pdf",
+            source_format="pdf",
+            text="x" * length,
+            blocks=[],
+            page_count=1,
+        )
+
+    def test_one_unit_from_a_full_resume_is_rejected(self) -> None:
+        """The exact observed failure: 1 unit from 1100 characters."""
+        with pytest.raises(ValueError, match="Refusing to score"):
+            _reject_degenerate_extraction(self._document(1100), [object()])
+
+    def test_a_healthy_extraction_passes(self) -> None:
+        # Real resumes yield roughly one unit per 50 to 80 characters.
+        _reject_degenerate_extraction(self._document(1100), [object()] * 20)
+
+    def test_a_short_document_is_exempt(self) -> None:
+        """A stub really can produce almost nothing, and that is not a bug."""
+        _reject_degenerate_extraction(self._document(200), [])
+
+    def test_the_error_names_both_numbers(self) -> None:
+        """So the reader can judge the call rather than trust the threshold."""
+        with pytest.raises(ValueError) as caught:
+            _reject_degenerate_extraction(self._document(1200), [object()])
+        message = str(caught.value)
+        assert "1 evidence unit" in message and "1200-character" in message
