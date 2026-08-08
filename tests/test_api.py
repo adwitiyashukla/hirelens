@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -189,20 +190,41 @@ async def create_job(client: httpx.AsyncClient) -> str:
 async def run_to_completion(
     client: httpx.AsyncClient, job_id: str, document_ids: list[str], **options
 ) -> str:
+    """Start a background run and poll until it reaches a terminal state.
+
+    Bounded by a wall-clock deadline rather than a poll count. The previous
+    version allowed 200 iterations of 50ms and assumed that meant ten seconds,
+    but each iteration also performs an HTTP request. On a loaded CI runner
+    those requests dominate, so the real budget was a fraction of the intended
+    one and this failed intermittently while the code under test was correct.
+
+    An intermittently red CI is worse than a slow test, because people stop
+    believing the signal and start ignoring genuine failures.
+    """
     response = await client.post(
         "/api/runs", json={"job_id": job_id, "document_ids": document_ids, **options}
     )
     assert response.status_code == 202, response.text
     run_id = response.json()["id"]
 
-    for _ in range(200):
+    deadline = time.monotonic() + 60.0
+    status: dict[str, object] = {}
+
+    while time.monotonic() < deadline:
         status = (await client.get(f"/api/runs/{run_id}")).json()
         if status["status"] in ("completed", "failed"):
             assert status["status"] == "completed", status.get("error")
             return run_id
         await asyncio.sleep(0.05)
 
-    raise AssertionError("run did not finish in time")
+    # Report where it actually got to. "Did not finish in time" on its own gives
+    # whoever sees this in CI nothing to work with.
+    raise AssertionError(
+        f"run {run_id} did not reach a terminal state within 60s. "
+        f"Last seen: status={status.get('status')!r} stage={status.get('stage')!r} "
+        f"completed={status.get('completed')} failed={status.get('failed')} "
+        f"of {status.get('total')}"
+    )
 
 
 # ---------------------------------------------------------------------------
