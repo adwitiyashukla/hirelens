@@ -78,12 +78,25 @@ and clicking a highlight selects the requirement it belongs to. That round trip 
 argument: a number you can trace back to a line of text is a different object from a number a
 model produced.
 
-> **Dashboard screenshots are not committed yet.** The interface runs, and the screening flow has
-> been driven end to end against a live provider, but the captures worth publishing are of a run
-> where every candidate is scored cleanly, and free-tier quotas made that a slow thing to arrange.
-> `docs/screenshots/README.md` specifies exactly which five to take. A mocked screenshot on a
-> project whose entire argument is that unevidenced claims are worthless would be self-refuting,
-> so there are none.
+![Screening run in progress](docs/screenshots/dashboard_run.png)
+
+A run in flight against `llama-3.3-70b-versatile`. Four resumes have been parsed, with page and
+character counts read back from the offset map that citations are later resolved against.
+Progress arrives over server-sent events, so the stage label is the pipeline's real position
+rather than a spinner. The green chip is not decoration: names, emails and institutions are
+already masked in what the model is reading.
+
+![Compiled rubric](docs/screenshots/dashboard_rubric.png)
+
+The same run, finished. On the left, the job description has been compiled into weighted atomic
+requirements before any resume was read, which is what makes scores comparable across candidates.
+On the right, an honest report: one candidate could not be assessed, and the run says so rather
+than scoring them zero. **A quota failure is not evidence about a candidate**, and the banner
+exists because an earlier version of this system did exactly that.
+
+> **Two captures are not yet taken:** the ranked shortlist and the evidence highlighter. Both need
+> a run where every candidate scores cleanly, and free-tier quotas made that slow to arrange.
+> `docs/screenshots/README.md` specifies them precisely. Nothing here is mocked.
 
 What the interface refuses to do is as deliberate as what it does:
 

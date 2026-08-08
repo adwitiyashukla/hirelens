@@ -22,6 +22,11 @@ uploads/
 # Scratch file used to pass a long commit message to `git commit -F`.
 COMMIT_MSG.tmp
 
+# Staging area for raw screen captures. Only the ones selected for the README
+# are committed, under docs/screenshots/, so that the repository does not carry
+# every discarded take.
+/screenshots/
+
 # python
 __pycache__/
 *.py[cod]
