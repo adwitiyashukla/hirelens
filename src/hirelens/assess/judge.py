@@ -1,29 +1,3 @@
-"""Judge one requirement against only the evidence retrieved for it.
-
-The scoping is the whole design. A conventional resume scorer puts the entire
-resume and the entire rubric in one prompt and asks for a verdict on everything.
-That prompt has three problems:
-
-* **Hallucination surface.** With the whole resume in context, a model asked about
-  Kubernetes can find *something* to say by reaching for an unrelated bullet. With
-  only four retrieved chunks in context, there is nothing to reach for.
-* **Contamination.** One badly-judged requirement drags the others with it,
-  because the model is producing them in a single autoregressive pass and
-  conditioning each on the last.
-* **Cost and parallelism.** One large sequential call instead of many small
-  concurrent ones, and no way to retry a single bad requirement.
-
-So each call sees: one requirement, its definition, and the handful of evidence
-units the retriever surfaced. Nothing else. Not the candidate's name, not their
-university, not the other requirements, not the overall score so far.
-
-Each requirement is judged ``k`` times at a non-zero temperature. This is
-**self-consistency sampling**: the spread across samples is a usable signal about
-how ambiguous the evidence actually is, and the median is more robust than any
-single draw. Temperature zero would produce a fake confidence interval of width
-zero, which is worse than no interval at all.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -79,7 +53,6 @@ masked with characters like [NAME]#### which you should skip.
 
 
 def build_prompt(requirement: Requirement, hits: list[RetrievalHit]) -> str:
-    """The user turn: one requirement, and only its evidence."""
     if hits:
         evidence = "\n".join(f"[{hit.unit.unit_id}] {hit.unit.text.strip()}" for hit in hits)
     else:
@@ -95,8 +68,6 @@ def build_prompt(requirement: Requirement, hits: list[RetrievalHit]) -> str:
 
 
 class RequirementJudge:
-    """Scores requirements against retrieved evidence."""
-
     def __init__(
         self, client: LLMClient | None = None, *, settings: Settings | None = None
     ) -> None:
@@ -110,13 +81,8 @@ class RequirementJudge:
         *,
         k: int | None = None,
     ) -> RequirementAssessment:
-        """Judge one requirement, sampling ``k`` times."""
         k = k if k is not None else self.settings.self_consistency_k
 
-        # Nothing retrieved means nothing to judge. Returning "none" directly
-        # saves k API calls per empty requirement, which across a batch is a
-        # large share of a free-tier quota spent confirming an empty list is
-        # empty.
         if not hits:
             return RequirementAssessment(
                 requirement_id=requirement.requirement_id,
@@ -142,23 +108,19 @@ class RequirementJudge:
             )
 
         if not judgements:
-            # Every sample failed. Record it as ambiguous rather than scoring
-            # zero: a provider outage is not evidence about the candidate.
             return RequirementAssessment(
                 requirement_id=requirement.requirement_id,
                 requirement_text=requirement.text,
                 kind=requirement.kind,
                 weight=requirement.weight,
                 verdict=Verdict.NONE,
-                samples=[Verdict.NONE, Verdict.STRONG],  # maximal spread = flagged
+                samples=[Verdict.NONE, Verdict.STRONG],
                 reasoning="Judging failed for this requirement. Human review required.",
             )
 
         samples = [j.verdict for j in judgements]
         verdict = aggregate_verdicts(samples)
 
-        # Explain using a sample that agreed with the aggregate, so the reasoning
-        # shown to the user matches the verdict shown to the user.
         representative = next((j for j in judgements if j.verdict is verdict), judgements[0])
         citations = _citations_for(representative, hits)
 
@@ -180,11 +142,6 @@ class RequirementJudge:
         *,
         k: int | None = None,
     ) -> list[RequirementAssessment]:
-        """Judge every requirement concurrently.
-
-        The client's semaphore bounds real concurrency, so this stays inside
-        free-tier rate limits even with a dozen requirements times k samples.
-        """
         return list(
             await asyncio.gather(
                 *(
@@ -197,14 +154,6 @@ class RequirementJudge:
         )
 
     async def _sample(self, prompt: str, index: int) -> RawJudgement:
-        """One sample. The seed varies so the cache does not collapse all k calls.
-
-        Without a per-sample seed, every sample would be an identical request,
-        hit the same cache entry, and return the same verdict k times. The
-        confidence band would then always be zero: a completely fake measurement
-        of stability. This is the single easiest way to accidentally fake
-        self-consistency, so it is worth being explicit about.
-        """
         try:
             return await self.client.structured(
                 RawJudgement,
@@ -217,19 +166,6 @@ class RequirementJudge:
 
 
 def _citations_for(judgement: RawJudgement, hits: list[RetrievalHit]) -> list:
-    """Turn the cited unit ids back into verified citations.
-
-    Three rules:
-
-    * A ``none`` verdict carries no citations, whatever the model returned.
-      "Nothing here supports the requirement" and "here is the supporting
-      evidence" cannot both be true, and models do sometimes fill in the ids
-      field out of habit. Displaying a citation next to a zero score would
-      undermine the one property the whole report is built on.
-    * Unit ids the model invented are dropped. They refer to nothing.
-    * A positive verdict with no usable ids falls back to the top hit, so a score
-      above zero is never left with no evidence attached at all.
-    """
     if judgement.verdict is Verdict.NONE:
         return []
 

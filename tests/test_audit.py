@@ -1,13 +1,3 @@
-"""Phase 6 tests: perturbation integrity, drift maths, and the audit gate.
-
-The most important test in this file is
-``test_audit_detects_a_deliberately_biased_model``. A fairness audit that cannot
-detect bias when bias is definitely present is worse than no audit, because it
-produces a clean report that means nothing. So the suite includes a fake model
-that is rigged to score one demographic group higher, and asserts the audit
-catches it and fails the gate.
-"""
-
 from __future__ import annotations
 
 import json
@@ -35,24 +25,17 @@ from hirelens.llm.base import CompletionRequest, CompletionResponse, LLMProvider
 from hirelens.llm.client import LLMClient
 from hirelens.retrieve.embeddings import HashingEmbedder
 
-# ---------------------------------------------------------------------------
-# Perturbations
-# ---------------------------------------------------------------------------
-
 
 class TestPerturbationSets:
     def test_null_control_changes_nothing(self) -> None:
-        """If the control perturbed anything it would not measure noise."""
         base = Demographics(name="Original Person", university="Some College")
         for variant in NULL_VARIANTS:
             assert variant.apply(base) == base
 
     def test_two_controls_exist(self) -> None:
-        """One control cannot produce a range, so there would be no noise floor."""
         assert len(NULL_VARIANTS) >= 2
 
     def test_gender_variants_share_a_surname(self) -> None:
-        """Otherwise the surname would confound the first-name signal."""
         surnames = {v.overrides["name"].split()[-1] for v in GENDER_VARIANTS}
         assert len(surnames) == 1
 
@@ -61,7 +44,6 @@ class TestPerturbationSets:
             assert "pronouns" in variant.overrides
 
     def test_ethnicity_variants_only_change_the_name(self) -> None:
-        """Changing anything else would confound the ethnicity signal."""
         for variant in ETHNICITY_VARIANTS:
             assert set(variant.overrides) == {"name"}
 
@@ -74,7 +56,6 @@ class TestPerturbationSets:
             assert variant.group
 
     def test_variants_never_touch_ability_fields(self) -> None:
-        """The causal claim collapses if a perturbation can change the evidence."""
         allowed = {"name", "pronouns", "university", "location", "email"}
         for variant in build_plan(DEFAULT_AXES):
             assert set(variant.overrides) <= allowed
@@ -86,7 +67,6 @@ class TestPlanBuilding:
         assert plan[0].axis is Axis.NULL
 
     def test_truncation_never_drops_the_control(self) -> None:
-        """Saving calls by cutting the control would remove the only interpretable baseline."""
         plan = build_plan(DEFAULT_AXES, variants_per_axis=1)
         assert sum(1 for v in plan if v.is_control) == len(NULL_VARIANTS)
 
@@ -106,7 +86,6 @@ class TestPlanBuilding:
 
 class TestProfilePerturbationIntegrity:
     def test_applying_a_variant_changes_only_identity_lines(self) -> None:
-        """The causal claim in the report depends on exactly this."""
         profile = build_golden_set().profiles[0]
         variant = GENDER_VARIANTS[0]
         perturbed = profile.with_demographics(variant.apply(profile.demographics))
@@ -118,7 +97,6 @@ class TestProfilePerturbationIntegrity:
         differing = [i for i, (a, b) in enumerate(zip(original, changed, strict=True)) if a != b]
         for index in differing:
             line = original[index]
-            # No line describing ability may differ.
             assert not any(
                 token in line for token in ("Kafka", "Kubernetes", "latency", "EXPERIENCE")
             )
@@ -135,11 +113,6 @@ class TestProfilePerturbationIntegrity:
             start = perturbed.index("EXPERIENCE")
             end = perturbed.index("EDUCATION")
             assert perturbed[start:end] == reference, variant.label
-
-
-# ---------------------------------------------------------------------------
-# Drift maths
-# ---------------------------------------------------------------------------
 
 
 def obs(
@@ -166,7 +139,6 @@ def obs(
 
 class TestAxisResult:
     def test_drift_is_measured_within_a_profile(self) -> None:
-        """Across profiles it would measure candidate quality, not bias."""
         observations = [
             obs("c01", "gender", "male", "male", 80.0),
             obs("c01", "gender", "female", "female", 70.0),
@@ -175,7 +147,6 @@ class TestAxisResult:
         ]
         result = _axis_result(observations, "gender", blind=True)
         assert result is not None
-        # 10 and 2, not the 42-point spread between candidates.
         assert result.max_drift == pytest.approx(10.0)
         assert result.mean_drift == pytest.approx(6.0)
 
@@ -203,7 +174,6 @@ class TestAxisResult:
         assert result.group_gap == 0.0
 
     def test_must_have_flips_are_counted(self) -> None:
-        """A swap that changes must-have compliance changes a hiring decision."""
         observations = [
             obs("c01", "gender", "male", "male", 75.0, meets=True),
             obs("c01", "gender", "female", "female", 74.0, meets=False),
@@ -262,7 +232,6 @@ def report_with(*results: AxisResult, noise: float = 1.0, threshold: float = 2.0
 
 class TestExcessDrift:
     def test_drift_below_the_noise_floor_counts_as_zero(self) -> None:
-        """The single most important guard against fairness theatre."""
         report = report_with(axis_result("gender", blind=True, drift=0.8), noise=1.5)
         assert report.excess_drift(report.axes[0]) == 0.0
 
@@ -290,7 +259,6 @@ class TestAuditGate:
         assert any("gender" in failure for failure in result.failures)
 
     def test_a_must_have_flip_fails_even_within_the_score_threshold(self) -> None:
-        """A tiny score move that flips a hiring decision is not a small problem."""
         report = report_with(
             axis_result("gender", blind=True, drift=1.0, must_have_flips=1), noise=1.0
         )
@@ -299,7 +267,6 @@ class TestAuditGate:
         assert any("hiring decision" in failure for failure in result.failures)
 
     def test_sighted_drift_is_a_note_not_a_failure(self) -> None:
-        """Blind mode is what ships; sighted numbers measure the problem it solves."""
         report = report_with(
             axis_result("gender", blind=True, drift=0.5),
             axis_result("gender", blind=False, drift=12.0),
@@ -310,7 +277,6 @@ class TestAuditGate:
         assert any("blind mode OFF" in note for note in result.notes)
 
     def test_noise_above_the_threshold_fails_the_audit(self) -> None:
-        """If the system is that unstable, no demographic conclusion is possible."""
         report = report_with(axis_result("gender", blind=True, drift=1.0), noise=5.0)
         result = check_audit(report)
         assert not result.passed
@@ -357,20 +323,7 @@ class TestReportRendering:
         assert AuditReport.load(path).axes[0].max_drift == pytest.approx(1.0)
 
 
-# ---------------------------------------------------------------------------
-# End to end, including a deliberately biased model
-# ---------------------------------------------------------------------------
-
-
 class BiasedProvider(LLMProvider):
-    """A model rigged to reward one demographic group. Used to prove the audit works.
-
-    When ``bias_points`` is zero it is unbiased and the audit should find nothing.
-    When it is large, it upgrades its verdict whenever the favoured signal appears
-    in the prompt, and the audit must catch it. An audit that reports clean on this
-    provider is broken.
-    """
-
     name = "biased"
     model = "biased-stub"
 
@@ -406,7 +359,6 @@ class BiasedProvider(LLMProvider):
             evidence = convo.split("EVIDENCE RETRIEVED")[1]
             has_signal = "Kubernetes" in evidence or "Kafka" in evidence
             verdict = "clear" if has_signal else "partial"
-            # The bias: an unrelated demographic token upgrades the verdict.
             if self.bias_points and self.favoured in evidence:
                 verdict = "strong"
             ids = [line.split("]")[0][1:] for line in convo.split("\n") if line.startswith("[")][:1]
@@ -447,7 +399,7 @@ class BiasedProvider(LLMProvider):
 def audit_settings(tmp_path: Path) -> Settings:
     return Settings(
         llm_provider=Provider.OLLAMA,
-        cache_enabled=True,  # the audit must turn this off itself
+        cache_enabled=True,
         cache_dir=tmp_path,
         blind_mode=True,
         self_consistency_k=1,
@@ -494,12 +446,6 @@ class TestAuditEndToEnd:
         await client.aclose()
 
     async def test_audit_detects_a_deliberately_biased_model(self, tmp_path: Path) -> None:
-        """The test that decides whether this whole phase is worth anything.
-
-        The provider upgrades its verdict whenever an elite institution appears in
-        the evidence, which is exactly the behaviour the audit exists to catch.
-        With blind mode off, the audit must see the drift and the gate must fail.
-        """
         settings = audit_settings(tmp_path).model_copy(update={"blind_mode": False})
         client = LLMClient(BiasedProvider(favoured="Stanford", bias_points=20), settings=settings)
         audit = FairnessAudit(settings=settings, embedder=HashingEmbedder(), client=client)
@@ -520,7 +466,6 @@ class TestAuditEndToEnd:
         await client.aclose()
 
     async def test_blind_mode_suppresses_the_bias_the_model_has(self, tmp_path: Path) -> None:
-        """Blind mode masks the institution, so the rigged signal never reaches the model."""
         settings = audit_settings(tmp_path)
         client = LLMClient(BiasedProvider(favoured="Stanford", bias_points=20), settings=settings)
         audit = FairnessAudit(settings=settings, embedder=HashingEmbedder(), client=client)
@@ -542,7 +487,6 @@ class TestAuditEndToEnd:
         await client.aclose()
 
     async def test_the_audit_disables_caching_for_itself(self, tmp_path: Path) -> None:
-        """Otherwise the null control measures a noise floor of zero by construction."""
         settings = audit_settings(tmp_path)
         assert settings.cache_enabled is True
 
@@ -558,8 +502,6 @@ class TestAuditEndToEnd:
             both_modes=False,
             k=1,
         )
-        # Both control runs are byte-identical, so with caching on the second would
-        # have been served from disk and made no calls at all.
         assert client.cache.hits == 0
         await client.aclose()
 

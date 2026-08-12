@@ -1,16 +1,3 @@
-"""Render an evaluation report, and gate CI on it.
-
-Two outputs from the same data: a console view for working, and a markdown table
-for the README. The README table is the artefact a recruiter reads, so it has to
-be honest by construction rather than by intention. That means the baseline row
-and the confidence intervals are printed whether or not they are flattering.
-
-The regression gate is what makes prompt engineering into engineering. A prompt
-change that raises the score on one hand-checked example and lowers agreement
-across the golden set is a regression, and without a gate nobody would ever find
-out.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,19 +5,10 @@ from pathlib import Path
 
 from hirelens.evals.runner import EvalReport
 
-# How far a metric may drop before the gate fails. Small but not zero: bootstrap
-# intervals and provider nondeterminism move the third decimal place, and a gate
-# that fires on noise gets disabled within a week.
 DEFAULT_TOLERANCE = 0.05
 
 
-# ---------------------------------------------------------------------------
-# Markdown
-# ---------------------------------------------------------------------------
-
-
 def to_markdown(report: EvalReport) -> str:
-    """The table that goes in the README."""
     lines: list[str] = []
     add = lines.append
 
@@ -141,13 +119,7 @@ def to_markdown(report: EvalReport) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Console
-# ---------------------------------------------------------------------------
-
-
 def to_console(report: EvalReport) -> str:
-    """Compact plain-text view for the terminal."""
     out: list[str] = []
     add = out.append
     rule = "=" * 74
@@ -221,11 +193,6 @@ def to_console(report: EvalReport) -> str:
     return "\n".join(out)
 
 
-# ---------------------------------------------------------------------------
-# Regression gate
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class GateResult:
     passed: bool
@@ -246,18 +213,11 @@ def check_regression(
     tolerance: float = DEFAULT_TOLERANCE,
     require_beats_baselines: bool = True,
 ) -> GateResult:
-    """Decide whether this run is acceptable. Used by CI.
-
-    Absolute checks run whether or not a stored baseline exists; the comparison
-    checks only run when there is something to compare against.
-    """
     failures: list[str] = []
     notes: list[str] = []
 
     if current.pooled is None:
         return GateResult(False, ["No pairs were evaluated."], current.warnings)
-
-    # -- absolute floors -----------------------------------------------------
 
     if require_beats_baselines and not current.beats_best_baseline:
         best = max(current.baselines.items(), key=lambda kv: kv[1].spearman, default=None)
@@ -279,8 +239,6 @@ def check_regression(
             f"Citation validity {current.quality.mean_citation_validity:.1%} is below 90%. "
             f"The grounding claim is the core of this project."
         )
-
-    # -- comparison against the stored baseline ------------------------------
 
     if baseline is None or baseline.pooled is None:
         notes.append("No stored baseline. Recording this run as the new baseline.")

@@ -1,26 +1,3 @@
-"""The evaluation harness: run the pipeline over the golden set and report.
-
-What ``make eval`` produces, and why each part is there:
-
-* **Agreement with human ranking**, per job and pooled, as Spearman and Kendall
-  with bootstrap intervals. The headline question: does this order candidates the
-  way a person would?
-* **Baseline comparison.** The same metrics for random, keyword-overlap and BM25
-  rankers. Without these the headline number is unanchored.
-* **Self-consistency.** Mean sample agreement and mean confidence-band width
-  across every requirement judged. Answers "would we get the same answer
-  tomorrow", which nobody normally measures.
-* **Citation validity and grounding.** The properties the whole project claims,
-  measured rather than asserted.
-* **Latency and token cost**, so the quality numbers can be read against what
-  they cost.
-
-The harness is deterministic given a warm cache: profiles render identically,
-document ids are content-addressed, and per-sample nonces are indexed rather than
-random. Two consecutive runs produce the same numbers, which is what makes the
-regression gate meaningful.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -54,8 +31,6 @@ logger = logging.getLogger(__name__)
 
 
 class MetricBlock(BaseModel):
-    """Metrics for one ranker against human labels, on one job or pooled."""
-
     model_config = ConfigDict(frozen=True)
 
     label: str
@@ -92,8 +67,6 @@ class MetricBlock(BaseModel):
 
 
 class QualityBlock(BaseModel):
-    """Properties of the pipeline that are independent of the ranking."""
-
     model_config = ConfigDict(frozen=True)
 
     mean_grounding_rate: float
@@ -117,8 +90,6 @@ class CostBlock(BaseModel):
 
 
 class EvalReport(BaseModel):
-    """Everything one harness run produced."""
-
     model_config = ConfigDict(frozen=True)
 
     provider: str
@@ -139,18 +110,12 @@ class EvalReport(BaseModel):
 
     @property
     def beats_best_baseline(self) -> bool:
-        """True when our point estimate exceeds every baseline's.
-
-        Point estimates only. Whether the *intervals* separate is a stronger
-        question, reported alongside rather than folded into this flag.
-        """
         if self.pooled is None or not self.baselines:
             return False
         return all(self.pooled.spearman > block.spearman for block in self.baselines.values())
 
     @property
     def clears_random_noise(self) -> bool:
-        """True when our result exceeds what chance produces 95% of the time."""
         return self.pooled is not None and self.pooled.spearman > self.random_ceiling_95
 
     def save(self, path: Path) -> None:
@@ -182,15 +147,12 @@ class _PairResult:
 
 @dataclass
 class EvalHarness:
-    """Runs the pipeline over the golden set and computes the report."""
-
     golden: GoldenSet = field(default_factory=build_golden_set)
     settings: Settings = field(default_factory=get_settings)
     embedder: Embedder | None = None
     client: LLMClient | None = None
 
     async def run(self, labels: LabelSet, *, top_k: int = 4) -> EvalReport:
-        """Evaluate every labelled (job, candidate) pair."""
         started = time.perf_counter()
 
         job_ids = [job.job_id for job in self.golden.jobs]
@@ -226,8 +188,6 @@ class EvalHarness:
                         documents[profile.candidate_id],
                         rubric,
                         top_k=top_k,
-                        # Interview questions do not affect any metric here and
-                        # would add one API call per pair for nothing.
                         with_questions=False,
                     )
                     results.append(
@@ -246,8 +206,6 @@ class EvalHarness:
             wall_clock=time.perf_counter() - started,
         )
         return report
-
-    # -- report assembly -----------------------------------------------------
 
     def _build_report(
         self,
@@ -273,10 +231,6 @@ class EvalHarness:
                 warnings=[*warnings, "No pairs were evaluated. Add labels first."],
             )
 
-        # Pooled correlation is computed on within-job z-scores rather than raw
-        # scores. Different jobs have different score distributions, and pooling
-        # raw values would let an easy job's inflated scores dominate the
-        # coefficient without saying anything about ranking quality.
         pooled_system, pooled_human = _pool_by_job(results)
 
         per_job: dict[str, MetricBlock] = {}
@@ -330,7 +284,6 @@ class EvalHarness:
     def _baseline_metrics(
         self, results: list[_PairResult], labels: LabelSet
     ) -> dict[str, MetricBlock]:
-        """Run every baseline over the same pairs the pipeline saw."""
         rendered = {p.candidate_id: p.render() for p in self.golden.profiles}
         blocks: dict[str, MetricBlock] = {}
 
@@ -367,9 +320,6 @@ class EvalHarness:
         return blocks
 
 
-# ---------------------------------------------------------------------------
-
-
 def _summarise(job_id: str, candidate_id: str, human: float, outcome: Any) -> _PairResult:
     a = outcome.assessment
     return _PairResult(
@@ -389,12 +339,6 @@ def _summarise(job_id: str, candidate_id: str, human: float, outcome: Any) -> _P
 
 
 def _pool_by_job(results: list[_PairResult]) -> tuple[list[float], list[float]]:
-    """Standardise scores within each job before pooling across jobs.
-
-    Without this, a job whose candidates all score highly would contribute a
-    different scale to the pooled correlation than a harder one, and the
-    coefficient would partly measure which jobs happened to be easy.
-    """
     system: list[float] = []
     human: list[float] = []
 
@@ -423,7 +367,6 @@ def _mean(values) -> float:
 
 
 def _as_document(candidate_id: str, text: str) -> SourceDocument:
-    """Render profile text into a SourceDocument with a stable content-addressed id."""
     accumulator = TextAccumulator()
     for line in text.splitlines():
         stripped = line.strip()

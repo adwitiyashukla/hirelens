@@ -1,11 +1,3 @@
-"""Phase 5 tests: metrics, baselines, golden set, labels, and the regression gate.
-
-The metrics tests are checked against values computed by hand or against known
-properties, because a metric implementation that is silently wrong would make
-every number the project reports wrong in the same direction, and nothing else
-would catch it.
-"""
-
 from __future__ import annotations
 
 import json
@@ -40,17 +32,12 @@ from hirelens.evals.profiles import Demographics
 from hirelens.evals.report import check_regression, to_console, to_markdown
 from hirelens.evals.runner import EvalReport, MetricBlock, _PairResult, _pool_by_job
 
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
-
 
 class TestRanking:
     def test_ranks_are_one_based(self) -> None:
         assert rank_with_ties([10.0, 20.0, 30.0]) == [1.0, 2.0, 3.0]
 
     def test_ties_share_the_average_rank(self) -> None:
-        """Otherwise the coefficient depends on the arbitrary order of equal items."""
         assert rank_with_ties([5.0, 5.0, 9.0]) == [1.5, 1.5, 3.0]
 
     def test_a_block_of_ties_averages_correctly(self) -> None:
@@ -65,7 +52,6 @@ class TestCorrelations:
         assert spearman([1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]) == pytest.approx(-1.0)
 
     def test_monotonic_but_nonlinear_still_correlates_perfectly(self) -> None:
-        """Spearman is rank-based, so any monotonic transform must give 1.0."""
         xs = [1.0, 2.0, 3.0, 4.0]
         assert spearman(xs, [1.0, 4.0, 9.0, 16.0]) == pytest.approx(1.0)
 
@@ -73,10 +59,8 @@ class TestCorrelations:
         assert spearman([1.0, 1.0, 1.0], [1.0, 2.0, 3.0]) == 0.0
 
     def test_tie_corrected_against_a_hand_computed_value(self) -> None:
-        """The naive 1 - 6*sum(d^2)/(n(n^2-1)) formula is wrong under ties."""
         system = [10.0, 20.0, 30.0, 40.0]
         human = [1.0, 1.0, 2.0, 3.0]
-        # Ranks: system [1,2,3,4], human [1.5,1.5,3,4]. Pearson on those.
         assert spearman(system, human) == pytest.approx(pearson([1, 2, 3, 4], [1.5, 1.5, 3, 4]))
 
     def test_kendall_perfect_agreement(self) -> None:
@@ -88,7 +72,6 @@ class TestCorrelations:
 
     def test_kendall_is_less_moved_by_one_outlier_than_spearman(self) -> None:
         human = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-        # Move the best candidate to last place.
         system = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 1.0]
         assert kendall_tau_b(system, human) > spearman(system, human)
 
@@ -101,7 +84,6 @@ class TestInversionRate:
         assert inversion_rate([3.0, 2.0, 1.0], [1.0, 2.0, 3.0]) == 1.0
 
     def test_pairs_the_human_tied_are_excluded(self) -> None:
-        """There is no wrong answer for a pair the human considered equal."""
         assert inversion_rate([1.0, 2.0], [5.0, 5.0]) == 0.0
 
 
@@ -112,7 +94,6 @@ class TestTopKPrecision:
         assert top_k_precision(system, human, k=3) == pytest.approx(1.0)
 
     def test_top_three_all_wrong(self) -> None:
-        """Exactly reversed: our top three are the human's bottom three."""
         human = [5.0, 4.0, 3.0, 2.0, 1.0, 0.0]
         system = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
         assert top_k_precision(system, human, k=3) == pytest.approx(0.0)
@@ -120,7 +101,6 @@ class TestTopKPrecision:
     def test_partial_overlap_scores_between(self) -> None:
         system = [0.0, 1.0, 2.0, 8.0, 9.0]
         human = [4.0, 4.0, 4.0, 0.0, 0.0]
-        # Our top three are indices 4, 3, 2; only index 2 is in the human top tier.
         assert top_k_precision(system, human, k=3) == pytest.approx(1 / 3)
 
     def test_k_larger_than_the_set_is_safe(self) -> None:
@@ -135,13 +115,11 @@ class TestBootstrap:
         assert estimate.low <= estimate.value <= estimate.high
 
     def test_is_reproducible(self) -> None:
-        """A metric that moves when nothing changed cannot gate anything."""
         xs = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
         ys = [2.0, 1.0, 4.0, 3.0, 6.0, 5.0]
         assert spearman_ci(xs, ys) == spearman_ci(xs, ys)
 
     def test_tiny_samples_report_the_full_range(self) -> None:
-        """Rather than a falsely narrow interval that invites overclaiming."""
         estimate = spearman_ci([1.0, 2.0], [1.0, 2.0])
         assert (estimate.low, estimate.high) == (-1.0, 1.0)
 
@@ -174,11 +152,6 @@ class TestDistribution:
         assert mean_absolute_error([1.0, 2.0], [2.0, 4.0]) == pytest.approx(1.5)
 
 
-# ---------------------------------------------------------------------------
-# Golden set
-# ---------------------------------------------------------------------------
-
-
 class TestGoldenSet:
     def test_has_profiles_and_jobs(self) -> None:
         golden = build_golden_set()
@@ -191,7 +164,6 @@ class TestGoldenSet:
         assert len(ids) == len(set(ids))
 
     def test_quality_tiers_span_a_range(self) -> None:
-        """A set where everyone is mediocre cannot distinguish good ranking from bad."""
         tiers = {p.quality for p in build_golden_set().profiles}
         assert len(tiers) >= 3
 
@@ -200,7 +172,6 @@ class TestGoldenSet:
             assert profile.notes.strip(), profile.candidate_id
 
     def test_rendering_is_deterministic(self) -> None:
-        """Content-addressed ids and a warm cache depend on this."""
         golden = build_golden_set()
         for profile in golden.profiles:
             assert profile.render() == profile.render()
@@ -219,7 +190,6 @@ class TestGoldenSet:
 
 class TestDemographicPerturbation:
     def test_swapping_demographics_changes_only_demographics(self) -> None:
-        """The entire Phase 6 fairness claim rests on this being true."""
         profile = build_golden_set().profiles[0]
         swapped = profile.with_demographics(
             Demographics(name="Different Person", university="Other College", location="Elsewhere")
@@ -241,16 +211,10 @@ class TestDemographicPerturbation:
         assert len(original_lines) == len(swapped_lines)
 
         differing = [(a, b) for a, b in zip(original_lines, swapped_lines, strict=True) if a != b]
-        # Name line, contact line, education line. Nothing about ability.
         assert len(differing) == 3
         for original, _ in differing:
             assert "Kafka" not in original
             assert "Kubernetes" not in original
-
-
-# ---------------------------------------------------------------------------
-# Baselines
-# ---------------------------------------------------------------------------
 
 
 class TestBaselines:
@@ -262,7 +226,6 @@ class TestBaselines:
     JOB = "We need someone with Kubernetes and Kafka experience running services in production."
 
     def test_keyword_baseline_ranks_the_stuffed_resume_highly(self) -> None:
-        """This is the failure mode the baseline exists to demonstrate."""
         scores = KeywordOverlapBaseline().score(self.JOB, self.RESUMES)
         assert scores[2] >= scores[1]
 
@@ -279,7 +242,6 @@ class TestBaselines:
         )
 
     def test_chance_ceiling_is_well_above_zero_on_small_sets(self) -> None:
-        """The reason a bare correlation on 12 candidates proves nothing."""
         human = [float(i) for i in range(12)]
         _, ceiling = RandomBaseline().expected_correlation(human, spearman)
         assert ceiling > 0.3
@@ -288,11 +250,6 @@ class TestBaselines:
         small = RandomBaseline().expected_correlation([float(i) for i in range(8)], spearman)[1]
         large = RandomBaseline().expected_correlation([float(i) for i in range(60)], spearman)[1]
         assert large < small
-
-
-# ---------------------------------------------------------------------------
-# Labels
-# ---------------------------------------------------------------------------
 
 
 class TestLabelSet:
@@ -332,7 +289,6 @@ class TestLabelSet:
 
 class TestLabelQuality:
     def test_flags_a_set_with_no_variance(self) -> None:
-        """Every candidate in one tier means there is no ranking to reproduce."""
         labels = LabelSet()
         for index in range(6):
             labels.upsert(Label.create("backend", f"c{index:02d}", Tier.YES, rationale="ok"))
@@ -362,11 +318,6 @@ class TestLabelQuality:
         assert check_label_quality(labels, ["backend"]) == []
 
 
-# ---------------------------------------------------------------------------
-# Pooling and reporting
-# ---------------------------------------------------------------------------
-
-
 def pair(job: str, candidate: str, score: float, human: float) -> _PairResult:
     return _PairResult(
         job_id=job,
@@ -386,7 +337,6 @@ def pair(job: str, candidate: str, score: float, human: float) -> _PairResult:
 
 class TestPooling:
     def test_scores_are_standardised_within_each_job(self) -> None:
-        """An easy job's inflated scores must not dominate the pooled coefficient."""
         results = [
             pair("easy", "c01", 90.0, 4.0),
             pair("easy", "c02", 85.0, 3.0),
@@ -394,8 +344,6 @@ class TestPooling:
             pair("hard", "c02", 20.0, 3.0),
         ]
         system, human = _pool_by_job(results)
-        # Both jobs rank identically, so pooled agreement must be perfect despite
-        # the raw scales being completely different.
         assert spearman(system, human) == pytest.approx(1.0)
 
     def test_pooling_preserves_pair_count(self) -> None:
@@ -443,7 +391,6 @@ class TestReportRendering:
         )
 
     def test_markdown_includes_the_baseline_row(self) -> None:
-        """Omitting it would make the headline number unanchored."""
         markdown = to_markdown(self.build())
         assert "bm25" in markdown
         assert "HireLens" in markdown
@@ -529,7 +476,6 @@ class TestRegressionGate:
         assert any("noise" in failure for failure in result.failures)
 
     def test_low_citation_validity_fails(self) -> None:
-        """The grounding claim is the core of the project, so it is a hard floor."""
         result = check_regression(self.build(0.8, validity=0.5), None)
         assert not result.passed
         assert any("Citation validity" in failure for failure in result.failures)
@@ -540,7 +486,6 @@ class TestRegressionGate:
         assert any("dropped" in failure for failure in result.failures)
 
     def test_a_small_drop_is_tolerated(self) -> None:
-        """A gate that fires on noise gets disabled within a week."""
         result = check_regression(self.build(0.78), self.build(0.80))
         assert result.passed
 

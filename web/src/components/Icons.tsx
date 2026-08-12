@@ -1,14 +1,3 @@
-/**
- * Inline SVG icons.
- *
- * Not an icon library. `lucide-react` would be one more dependency and about
- * 30 kB for the eight glyphs this interface uses, and these are small enough
- * that inlining them costs less than the import statement would.
- *
- * All of them inherit `currentColor` and size from a single prop, so an icon
- * always matches the text it sits beside without per-use styling.
- */
-
 interface IconProps {
   size?: number;
   className?: string;
@@ -26,7 +15,6 @@ const base = (size: number, className?: string) => ({
   strokeLinejoin: "round" as const,
 });
 
-/** The brand mark: a lens over a document. */
 export function Logo({ size = 18, className }: IconProps) {
   return (
     <svg {...base(size, className)} stroke="#060a14" strokeWidth={2.2} aria-hidden="true">
@@ -37,7 +25,6 @@ export function Logo({ size = 18, className }: IconProps) {
   );
 }
 
-/** Blind mode. A shield reads as protection rather than as concealment. */
 export function Shield({ size = 13, className }: IconProps) {
   return (
     <svg {...base(size, className)} aria-hidden="true">
@@ -101,7 +88,6 @@ export function External({ size = 12, className }: IconProps) {
   );
 }
 
-/** Two initials from a candidate label, for the shortlist disc. */
 export function initialsOf(label: string): string {
   const words = label.replace(/[^\p{L}\p{N}\s-]/gu, " ").trim().split(/[\s-]+/);
   if (words.length === 0 || !words[0]) return "?";

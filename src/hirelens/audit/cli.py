@@ -1,11 +1,3 @@
-"""Audit commands.
-
-``plan`` exists because the audit is the most expensive thing in the project and
-a free-tier quota is easy to exhaust by accident. It prints the call estimate and
-the exact experiment matrix without spending anything, so the cost is a decision
-rather than a surprise.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -32,16 +24,6 @@ DEFAULT_MARKDOWN = Path("docs/BIAS_AUDIT.md")
 
 @dataclass(frozen=True)
 class Budget:
-    """A preset sizing of the experiment, with its own sampling depth.
-
-    The audit runs with the response cache off (see
-    :func:`hirelens.audit.perturbations.estimate_calls` for why), so cost scales
-    linearly with every dimension. ``k`` is the cheapest lever and the one with the
-    clearest trade-off: fewer samples is cheaper but noisier, and a noisier system
-    has a higher noise floor, which makes small drift undetectable. It never causes
-    a false positive, only a missed one.
-    """
-
     variants_per_axis: int | None
     profiles: int
     k: int
@@ -103,7 +85,6 @@ def plan_command(
     job: Annotated[str, typer.Option("--job")] = "backend",
     axis: Annotated[list[str] | None, typer.Option("--axis", help="Repeatable")] = None,
 ) -> None:
-    """Show the experiment matrix and the real cost. Spends nothing."""
     spec = _budget(budget)
     axes = _resolve_axes(axis)
     variants = build_plan(axes, variants_per_axis=spec.variants_per_axis)
@@ -174,7 +155,6 @@ def run_command(
     gate: Annotated[bool, typer.Option("--gate", help="Exit non-zero if the audit fails")] = False,
     fast_embeddings: Annotated[bool, typer.Option("--fast-embeddings")] = False,
 ) -> None:
-    """Run the counterfactual bias audit."""
     spec = _budget(budget)
     axes = _resolve_axes(axis)
 
@@ -198,8 +178,6 @@ def run_command(
             variants_per_axis=spec.variants_per_axis,
             both_modes=spec.both_modes and not blind_only,
             threshold=threshold,
-            # An explicit --k wins; otherwise the budget's own sampling depth
-            # applies, since that is what its cost estimate was based on.
             k=k if k is not None else spec.k,
         )
     )
@@ -223,7 +201,6 @@ def run_command(
 def gate_command(
     report_path: Annotated[Path, typer.Option("--report")] = DEFAULT_REPORT,
 ) -> None:
-    """Check a stored audit report without re-running it."""
     if not report_path.exists():
         console.print(f"[red]No audit report at {report_path}.[/red]")
         raise typer.Exit(code=1)

@@ -1,11 +1,3 @@
-"""Phase 7 tests: routes, persistence, background execution, and SSE.
-
-Everything runs against in-memory SQLite and a scripted provider, so the suite
-needs no database server, no API key, and no network, and it finishes in seconds.
-That is only possible because the app is a factory rather than a module-level
-global: the test passes in its own database URL and its own runner.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -59,8 +51,6 @@ Requirements
 
 
 class StubProvider(LLMProvider):
-    """Answers every pipeline stage deterministically."""
-
     name = "stub"
     model = "stub-model"
 
@@ -141,7 +131,6 @@ class StubProvider(LLMProvider):
 
 @pytest_asyncio.fixture
 async def client() -> AsyncIterator[httpx.AsyncClient]:
-    """An app on in-memory SQLite with a stubbed pipeline."""
     settings = Settings(
         llm_provider=Provider.OLLAMA,
         cache_enabled=False,
@@ -159,8 +148,6 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
             embedder=HashingEmbedder(),
         )
 
-    # The lifespan builds app.state; the runner needs the session factory it
-    # created, so it is swapped in after startup rather than at construction.
     async with (
         httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http_client,
         app.router.lifespan_context(app),
@@ -190,17 +177,6 @@ async def create_job(client: httpx.AsyncClient) -> str:
 async def run_to_completion(
     client: httpx.AsyncClient, job_id: str, document_ids: list[str], **options
 ) -> str:
-    """Start a background run and poll until it reaches a terminal state.
-
-    Bounded by a wall-clock deadline rather than a poll count. The previous
-    version allowed 200 iterations of 50ms and assumed that meant ten seconds,
-    but each iteration also performs an HTTP request. On a loaded CI runner
-    those requests dominate, so the real budget was a fraction of the intended
-    one and this failed intermittently while the code under test was correct.
-
-    An intermittently red CI is worse than a slow test, because people stop
-    believing the signal and start ignoring genuine failures.
-    """
     response = await client.post(
         "/api/runs", json={"job_id": job_id, "document_ids": document_ids, **options}
     )
@@ -217,19 +193,12 @@ async def run_to_completion(
             return run_id
         await asyncio.sleep(0.05)
 
-    # Report where it actually got to. "Did not finish in time" on its own gives
-    # whoever sees this in CI nothing to work with.
     raise AssertionError(
         f"run {run_id} did not reach a terminal state within 60s. "
         f"Last seen: status={status.get('status')!r} stage={status.get('stage')!r} "
         f"completed={status.get('completed')} failed={status.get('failed')} "
         f"of {status.get('total')}"
     )
-
-
-# ---------------------------------------------------------------------------
-# Health
-# ---------------------------------------------------------------------------
 
 
 class TestHealth:
@@ -251,11 +220,6 @@ class TestHealth:
         assert (await client.get("/openapi.json")).status_code == 200
 
 
-# ---------------------------------------------------------------------------
-# Jobs
-# ---------------------------------------------------------------------------
-
-
 class TestJobs:
     async def test_create_and_fetch(self, client: httpx.AsyncClient) -> None:
         job_id = await create_job(client)
@@ -266,7 +230,6 @@ class TestJobs:
     async def test_creation_is_idempotent_on_the_description(
         self, client: httpx.AsyncClient
     ) -> None:
-        """Two candidates screened against 'the same job' must face one rubric."""
         first = await create_job(client)
         second = await create_job(client)
         assert first == second
@@ -282,7 +245,6 @@ class TestJobs:
         assert (await client.get("/api/jobs/nope")).status_code == 404
 
     async def test_rubric_appears_after_the_first_run(self, client: httpx.AsyncClient) -> None:
-        """Compilation is lazy, so creating a job never blocks on a model call."""
         job_id = await create_job(client)
         assert (await client.get(f"/api/jobs/{job_id}")).json()["requirements"] == []
 
@@ -294,11 +256,6 @@ class TestJobs:
         assert sum(r["weight"] for r in requirements) == pytest.approx(100.0)
 
 
-# ---------------------------------------------------------------------------
-# Documents
-# ---------------------------------------------------------------------------
-
-
 class TestDocuments:
     async def test_upload_and_fetch(self, client: httpx.AsyncClient) -> None:
         document_id = await upload_resume(client)
@@ -307,7 +264,6 @@ class TestDocuments:
         assert response.json()["filename"] == "priya.txt"
 
     async def test_upload_is_idempotent_on_content(self, client: httpx.AsyncClient) -> None:
-        """Recruiters really do upload the same CV twice."""
         first = await client.post(
             "/api/documents", files={"files": ("a.txt", RESUME.encode(), "text/plain")}
         )
@@ -323,7 +279,6 @@ class TestDocuments:
         )
 
     async def test_a_bad_file_does_not_fail_the_batch(self, client: httpx.AsyncClient) -> None:
-        """Partial success: 29 good resumes should not be lost to one bad file."""
         response = await client.post(
             "/api/documents",
             files=[
@@ -338,7 +293,6 @@ class TestDocuments:
         assert {item["filename"] for item in body["rejected"]} == {"bad.exe", "empty.txt"}
 
     async def test_text_endpoint_returns_the_offset_map(self, client: httpx.AsyncClient) -> None:
-        """Citation highlighting on the client depends on this exact payload."""
         document_id = await upload_resume(client)
         body = (await client.get(f"/api/documents/{document_id}/text")).json()
 
@@ -357,14 +311,8 @@ class TestDocuments:
         assert (await client.get("/api/documents/nope")).status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# Runs
-# ---------------------------------------------------------------------------
-
-
 class TestRuns:
     async def test_run_returns_202_immediately(self, client: httpx.AsyncClient) -> None:
-        """Screening takes tens of seconds; it must not block the request."""
         job_id = await create_job(client)
         document_id = await upload_resume(client)
 
@@ -426,11 +374,6 @@ class TestRuns:
         assert len(runs) == 1
 
 
-# ---------------------------------------------------------------------------
-# Assessment detail
-# ---------------------------------------------------------------------------
-
-
 class TestAssessmentDetail:
     @pytest_asyncio.fixture
     async def detail(self, client: httpx.AsyncClient) -> dict:
@@ -450,7 +393,6 @@ class TestAssessmentDetail:
             assert requirement["max_points"] > 0
 
     async def test_citations_are_verified_at_read_time(self, detail: dict) -> None:
-        """The grounding claim must be re-checkable, not trusted from the payload."""
         cited = [
             citation
             for requirement in detail["requirements"]
@@ -477,14 +419,8 @@ class TestAssessmentDetail:
         assert (await client.get("/api/assessments/nope")).status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# Progress streaming
-# ---------------------------------------------------------------------------
-
-
 class TestProgressChannel:
     async def test_a_late_subscriber_gets_the_current_state(self) -> None:
-        """Otherwise a client connecting after the end hangs forever."""
         channel = ProgressChannel("run-1")
         channel.publish(
             RunProgress(
@@ -523,20 +459,13 @@ class TestProgressChannel:
         assert received[-1].status == "completed"
 
     async def test_a_slow_subscriber_never_blocks_the_pipeline(self) -> None:
-        """Publishing must never await a reader.
-
-        The subscriber queue is bounded, so a client that cannot keep up would
-        otherwise apply backpressure all the way into the screening loop. Dropping
-        an intermediate event is harmless because the next one carries the
-        complete state.
-        """
         channel = ProgressChannel("run-1")
         stalled: list[RunProgress] = []
 
         async def never_reads() -> None:
             async for event in channel.subscribe():
                 stalled.append(event)
-                await asyncio.sleep(3600)  # simulate a client that stops reading
+                await asyncio.sleep(3600)
 
         task = asyncio.create_task(never_reads())
         await asyncio.sleep(0)
@@ -552,7 +481,6 @@ class TestProgressChannel:
                     failed=0,
                 )
             )
-        # Every publish returned immediately despite the reader being stuck.
         assert channel.latest is not None
         assert channel.latest.completed == 199
 
@@ -586,14 +514,6 @@ class TestEventStream:
 
 
 class TestFrontendMount:
-    """The dashboard is served by the API when a build exists.
-
-    Worth testing because the mount sits at "/" and is therefore one ordering
-    mistake away from swallowing every API route. A regression here would not
-    raise anything: the API would simply start returning index.html to a
-    frontend expecting JSON.
-    """
-
     def test_no_build_means_no_mount(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("HIRELENS_STATIC_DIR", str(tmp_path / "absent"))
         assert find_static_dir() is None
@@ -601,7 +521,6 @@ class TestFrontendMount:
     def test_a_directory_without_index_html_is_not_a_build(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Half-copied output should be ignored, not mounted and then 404 on load."""
         (tmp_path / "assets").mkdir()
         monkeypatch.setenv("HIRELENS_STATIC_DIR", str(tmp_path))
         assert find_static_dir() is None
@@ -614,7 +533,6 @@ class TestFrontendMount:
     async def test_api_routes_survive_the_root_mount(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The regression that matters: /health must not become index.html."""
         (tmp_path / "index.html").write_text("<html>dashboard</html>", encoding="utf-8")
         monkeypatch.setenv("HIRELENS_STATIC_DIR", str(tmp_path))
 

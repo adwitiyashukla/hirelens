@@ -1,11 +1,3 @@
-"""Ingestion tests.
-
-The property that matters: for every indexed block, slicing the document text by
-that block's span must return the block's text. If that invariant breaks, every
-citation in the system points at the wrong characters and nothing downstream can
-detect it.
-"""
-
 from __future__ import annotations
 
 from itertools import pairwise
@@ -47,7 +39,6 @@ class TestTextIngestion:
         assert "Kubernetes" in doc.text
 
     def test_every_block_span_slices_back_to_its_own_text(self, resume_txt: Path) -> None:
-        """The invariant the whole citation system rests on."""
         doc = read_document(resume_txt)
         assert doc.blocks, "expected at least one indexed block"
         for block in doc.blocks:
@@ -70,7 +61,6 @@ class TestTextIngestion:
         assert {"EXPERIENCE", "PROJECTS", "SKILLS"} <= headings
 
     def test_document_id_is_content_addressed(self, tmp_path: Path) -> None:
-        """Same bytes must give the same id, so the response cache actually hits."""
         a, b = tmp_path / "a.txt", tmp_path / "b.txt"
         a.write_text(RESUME, encoding="utf-8")
         b.write_text(RESUME, encoding="utf-8")

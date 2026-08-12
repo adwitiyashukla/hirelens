@@ -16,9 +16,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.10 is the declared floor and 3.12 is what most people have. Testing
-        # both catches the version-specific mistakes that are otherwise found by
-        # whoever clones the repo.
         python-version: ["3.10", "3.12"]
 
     steps:
@@ -30,14 +27,6 @@ jobs:
           cache: pip
 
       - name: Install
-        # `api` as well as `dev`, because tests/test_api.py imports the FastAPI
-        # app and the async SQLAlchemy layer. Installing only `dev` makes pytest
-        # fail during collection, which reads as a broken test suite rather than
-        # a missing dependency.
-        #
-        # Deliberately not `retrieval` or `evals`: the suite runs against the
-        # dependency-free hashing embedder and the in-repo metrics, so adding
-        # torch and scipy would cost minutes per run and prove nothing.
         run: pip install -e ".[dev,api]"
 
       - name: Lint
@@ -50,8 +39,6 @@ jobs:
         continue-on-error: true
 
       - name: Tests
-        # No API key and no network: every test runs against a fake provider and
-        # the dependency-free embedder.
         run: pytest -q --cov=hirelens --cov-report=term-missing
 
   web:
@@ -73,9 +60,6 @@ jobs:
         run: npm ci
 
       - name: Types
-        # The API client is typed against the response models by hand, so this
-        # step is what catches a schema change that the frontend has not
-        # followed. It is a real check, not a formality.
         run: npm run typecheck
 
       - name: Tests
@@ -99,20 +83,12 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Harness smoke test
-        # Proves the eval plumbing still works on every commit. The real harness
-        # needs an API key and human labels, so it is run manually and its report
-        # is committed; this job guards the machinery around it.
         run: python scripts/smoke_eval.py
 
       - name: Bias audit smoke test
-        # Runs both cases: a clean stand-in the audit must pass, and one rigged to
-        # reward elite institutions that it must catch. An audit that cannot detect
-        # deliberate bias is worse than none, so this guards the guard.
         run: python scripts/smoke_audit.py
 
       - name: Regression gate
-        # Only runs when a baseline report has been committed. Fails the build if
-        # agreement with human ranking has dropped beyond tolerance.
         run: |
           if [ -f evals/reports/baseline.json ] && [ -f evals/reports/latest.json ]; then
             python -m hirelens.evals.cli gate

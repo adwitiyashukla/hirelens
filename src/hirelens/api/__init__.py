@@ -1,5 +1,3 @@
-"""HTTP API: FastAPI app, persistence, and the background screening runner."""
-
 from hirelens.api.app import create_app
 from hirelens.api.runner import ScreeningRunner
 

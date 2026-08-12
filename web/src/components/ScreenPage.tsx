@@ -1,11 +1,3 @@
-/**
- * The screening flow: describe the job, add resumes, run, watch, rank.
- *
- * Kept on one page deliberately. A wizard would hide the job description while
- * the results are read, and the first question anyone asks about a low score is
- * "what did it think the job needed?". The compiled rubric stays visible.
- */
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 import type {
@@ -65,9 +57,6 @@ export function ScreenPage({
     api.listDocuments().then(setDocuments).catch(() => undefined);
   }, []);
 
-  // The stream reports completion; the ranked table then comes from the
-  // database. Deriving the shortlist from the events instead would mean
-  // reimplementing the ranking rule in the browser, and the two would drift.
   useEffect(() => {
     if (!finished || !run) return;
     api
@@ -80,10 +69,6 @@ export function ScreenPage({
         setError(cause instanceof ApiError ? cause.message : String(cause)),
       );
 
-    // The rubric is compiled during the run, so this is the first moment it
-    // exists. Re-fetching here is what makes it appear beside the results,
-    // which is also where a reader wants it: the first question a low score
-    // prompts is "what did it think the job required?".
     if (job) {
       api
         .getJob(job.id)
@@ -113,8 +98,7 @@ export function ScreenPage({
       const response = await api.uploadDocuments(files);
       setRejected(response.rejected);
       setDocuments(await api.listDocuments());
-      // Auto-select what was just uploaded, including duplicates: a recruiter
-      // who re-uploads a resume still means to screen that candidate.
+
       setSelected((current) => {
         const next = new Set(current);
         for (const item of response.uploaded) next.add(item.document.id);
@@ -237,12 +221,7 @@ export function ScreenPage({
             </div>
           </div>
 
-          {/*
-            Rendered only once requirements exist. The API compiles the rubric
-            lazily on the first run, so between saving the job and finishing a
-            run there is genuinely nothing to show, and an empty table with a
-            "0 points" badge reads like a failure rather than a pending step.
-          */}
+          {}
           {job && job.requirements.length > 0 && (
             <div className="card">
               <header>
@@ -433,11 +412,7 @@ export function ScreenPage({
             </span>
           </header>
 
-          {/*
-            The aggregate quality numbers sit above the ranking on purpose. They
-            answer "should I trust this table at all?", which has to be settled
-            before the ordering inside it means anything.
-          */}
+          {}
           <div className="metrics" style={{ marginBottom: 18 }}>
             <div className="metric">
               <div className="label">Screened</div>

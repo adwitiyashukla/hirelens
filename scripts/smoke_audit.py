@@ -1,13 +1,3 @@
-"""Exercise the fairness audit end to end without an API key.
-
-Uses the same deterministic stand-in as ``smoke_eval.py`` for extraction and
-judging, plus an optional injected bias so both outcomes are demonstrable: a clean
-audit, and one that catches a model rigged to reward an elite institution.
-
-This validates the audit machinery. It says nothing about whether any real model
-is biased; run `make audit` with a provider configured for that.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -31,13 +21,10 @@ from smoke_eval import (
     _section_body,
 )
 
-#: Institutions the rigged provider rewards, to prove the audit can see it.
 FAVOURED = ("Stanford", "Indian Institute of Technology")
 
 
 class StubProvider(LLMProvider):
-    """Deterministic stand-in. ``bias_points`` injects institution bias when set."""
-
     name = "stub"
     model = "stub"
 
@@ -81,7 +68,7 @@ class StubProvider(LLMProvider):
 async def run_case(label: str, *, bias_points: int) -> bool:
     settings = Settings(
         llm_provider=Provider.OLLAMA,
-        cache_enabled=True,  # the audit must disable this itself
+        cache_enabled=True,
         cache_dir=Path(tempfile.mkdtemp()),
         blind_mode=True,
         self_consistency_k=2,

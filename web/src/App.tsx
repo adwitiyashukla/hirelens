@@ -1,12 +1,3 @@
-/**
- * Shell and routing.
- *
- * No router library. There are three destinations and one of them takes an id,
- * so a discriminated union in state does the whole job in a dozen lines and
- * keeps the dependency list to React alone. If this grew a fourth or fifth
- * view, `react-router` would earn its place.
- */
-
 import { useEffect, useState } from "react";
 import { api } from "./api/client";
 import type { Health } from "./api/types";
@@ -58,11 +49,7 @@ export default function App() {
         <div className="spacer" />
         {health && (
           <>
-            {/*
-              Spelled out rather than labelled "blind mode". The bare phrase is
-              internal jargon: it tells a reader nothing, and this is one of the
-              stronger properties of the system, so it should state itself.
-            */}
+            {}
             {health.blind_mode && (
               <span
                 className="status-chip on"
@@ -101,11 +88,7 @@ export default function App() {
         </div>
       )}
 
-      {/*
-        Hidden rather than unmounted. Opening a candidate and coming back must
-        not discard the compiled rubric and the shortlist, and keeping the state
-        here would mean lifting the whole screening flow into the shell.
-      */}
+      {}
       <div style={{ display: view.name === "screen" ? "contents" : "none" }}>
         <ScreenPage
           onOpenCandidate={(assessmentId) =>

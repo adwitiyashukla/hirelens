@@ -1,21 +1,3 @@
-"""The end-to-end screening pipeline.
-
-Document plus job description in, :class:`CandidateAssessment` out.
-
-Two things this orchestrator is careful about.
-
-**The rubric is compiled once per batch, not once per candidate.** Compiling per
-candidate would produce slightly different requirements for each one, and
-comparing scores across candidates would then be meaningless. A batch shares one
-rubric object; this is a correctness property, not an optimisation.
-
-**One LLM client is shared across every stage.** Extraction, rubric compilation,
-judging and question generation all draw on the same cache, the same concurrency
-semaphore and the same token accounting. That is what keeps a batch of resumes
-inside a free-tier per-minute quota, and what makes the usage numbers in the eval
-harness real rather than per-stage guesses.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -42,37 +24,14 @@ from hirelens.schemas.resume import CitedResume
 
 logger = logging.getLogger(__name__)
 
-#: Evidence units retrieved per requirement. Small on purpose: the judge's
-#: reliability comes from seeing little enough that it cannot wander, and beyond
-#: about five chunks the marginal one is almost always noise.
 DEFAULT_TOP_K = 4
 
-#: Below this, a document is a stub (a cover note, a mostly blank page) and
-#: producing few evidence units from it is correct rather than suspicious.
 _MIN_CHARS_TO_EXPECT_EVIDENCE = 400
 
-#: One evidence unit per this many characters is already far below anything a
-#: real resume produces. Observed rates are one per 50 to 80 characters, so this
-#: only fires on genuine breakage, not on a terse candidate.
 _CHARS_PER_EXPECTED_UNIT = 400
 
 
 def _reject_degenerate_extraction(document: SourceDocument, units: Sequence[object]) -> None:
-    """Refuse to score a document the extractor clearly failed to read.
-
-    Written after watching a model return a nearly empty resume object that
-    still validated, because the fields it omitted all had defaults. The
-    pipeline scored the candidate 0 out of 100 and reported grounding 100% and
-    citation validity 100%, since the one claim it did extract was properly
-    cited. Every quality metric was green and the answer was worthless.
-
-    The metrics are ratios, so they measure internal consistency and say nothing
-    about coverage. An absolute floor is the missing half.
-
-    Raising is deliberate. Scoring anyway would put a confident zero in front of
-    a real hiring decision, and a candidate should never be rejected because a
-    model had a bad night.
-    """
     length = len(document.text)
     if length < _MIN_CHARS_TO_EXPECT_EVIDENCE:
         return
@@ -92,8 +51,6 @@ def _reject_degenerate_extraction(document: SourceDocument, units: Sequence[obje
 
 
 class ScreeningResult(BaseModel):
-    """One candidate's assessment plus the artefacts that produced it."""
-
     assessment: CandidateAssessment
     resume: CitedResume
     evidence_unit_count: int = 0
@@ -102,8 +59,6 @@ class ScreeningResult(BaseModel):
 
 
 class ScreeningPipeline:
-    """Runs the full screen for one or many candidates against one rubric."""
-
     def __init__(
         self,
         client: LLMClient | None = None,
@@ -122,12 +77,9 @@ class ScreeningPipeline:
 
     @property
     def embedder(self) -> Embedder:
-        """Loaded lazily so ``hirelens parse`` never pays for a model it will not use."""
         if self._embedder is None:
             self._embedder = get_embedder(self.settings.embedding_model)
         return self._embedder
-
-    # -- public API ----------------------------------------------------------
 
     async def compile_rubric(self, job_description: str) -> Rubric:
         return await self.compiler.compile(job_description)
@@ -141,7 +93,6 @@ class ScreeningPipeline:
         with_questions: bool = True,
         blind: bool | None = None,
     ) -> ScreeningResult:
-        """Screen one candidate against an already-compiled rubric."""
         started = time.perf_counter()
 
         extraction = await self.extractor.extract(document, blind=blind)
@@ -159,9 +110,6 @@ class ScreeningPipeline:
 
         assessment = CandidateAssessment(
             document_id=document.document_id,
-            # Blind mode must reach the report too. Labelling a blinded assessment
-            # with the candidate's filename would leak the identity we just spent
-            # the extraction stage removing.
             candidate_label=self._label(document, blind),
             rubric_id=rubric.rubric_id,
             role_title=rubric.role_title,
@@ -190,7 +138,6 @@ class ScreeningPipeline:
         top_k: int = DEFAULT_TOP_K,
         with_questions: bool = True,
     ) -> tuple[Rubric, list[ScreeningResult]]:
-        """Screen many candidates against one job description, then rank them."""
         rubric = await self.compile_rubric(job_description)
 
         results = await asyncio.gather(
@@ -204,7 +151,6 @@ class ScreeningPipeline:
         successes: list[ScreeningResult] = []
         for document, result in zip(documents, results, strict=True):
             if isinstance(result, BaseException):
-                # One unreadable resume must not lose the whole batch.
                 logger.error("screening failed for %s: %s", document.filename, result)
             else:
                 successes.append(result)
@@ -226,12 +172,6 @@ class ScreeningPipeline:
 
 
 def rank(results: list[ScreeningResult]) -> list[ScreeningResult]:
-    """Order candidates for a shortlist.
-
-    Candidates meeting every must-have come first regardless of score, because a
-    75 that is missing a hard requirement is not better than a 62 that meets them
-    all. Within each group, by score.
-    """
     return sorted(
         results,
         key=lambda r: (not r.assessment.meets_all_must_haves, -r.assessment.score),

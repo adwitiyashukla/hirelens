@@ -1,5 +1,3 @@
-"""LLM transport: providers, caching, retries, structured output."""
-
 from hirelens.llm.base import (
     CompletionRequest,
     CompletionResponse,

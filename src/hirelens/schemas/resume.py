@@ -1,36 +1,11 @@
-"""The structured resume, with every field carrying its evidence.
-
-Two schemas live here and the distinction matters.
-
-**Raw extraction schemas** (``Raw*``) are what we ask the model for. They contain
-plain values plus a ``quote`` string: the verbatim text the model claims it read
-the value from. They deliberately do *not* contain character offsets, because
-language models cannot count characters. Asking for offsets produces confident,
-wrong numbers roughly half the time.
-
-**Cited schemas** (``Cited*``) are what we hand downstream. We build them by taking
-each ``quote`` and locating it in the source document ourselves, with a real string
-search. The model's job is to say *what* it read; finding *where* it is is our job,
-and a computer is much better at it.
-
-That split is the reason the citation validity rate in this project is high rather
-than aspirational.
-"""
-
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from hirelens.schemas.evidence import Cited, VerificationResult
 
-# ---------------------------------------------------------------------------
-# Raw extraction schemas: what the model returns
-# ---------------------------------------------------------------------------
-
 
 class RawField(BaseModel):
-    """A single extracted value plus the text it was read from."""
-
     model_config = ConfigDict(extra="ignore")
 
     value: str = Field(description="The extracted value, normalised")
@@ -117,15 +92,6 @@ class RawAward(BaseModel):
     date: RawField | None = None
 
 
-# Section wrappers. Each extraction call targets exactly one of these, so a model
-# that struggles with one section cannot corrupt the others.
-#
-# Every field here has a default, so a bare ``{}`` is valid. That is deliberate:
-# "this resume has no awards section" is a correct answer, and a schema that
-# rejected it would burn three repair attempts arguing with a model that was
-# right the first time.
-
-
 class RawBasicsSection(BaseModel):
     model_config = ConfigDict(extra="ignore")
     basics: RawBasics = Field(default_factory=RawBasics)
@@ -154,11 +120,6 @@ class RawSkillsSection(BaseModel):
 class RawAwardsSection(BaseModel):
     model_config = ConfigDict(extra="ignore")
     awards: list[RawAward] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Cited schemas: what the rest of the system consumes
-# ---------------------------------------------------------------------------
 
 
 class Profile(BaseModel):
@@ -209,7 +170,6 @@ class Project(BaseModel):
 
     @property
     def has_link(self) -> bool:
-        """Projects with no link are much harder to verify, and the rubric says so."""
         return self.url is not None and bool(self.url.value.strip())
 
 
@@ -225,13 +185,6 @@ class Award(BaseModel):
 
 
 class GroundingStats(BaseModel):
-    """How much of this resume is actually backed by verified evidence.
-
-    Reported per-parse and aggregated by the evaluation harness into the
-    "citation validity rate" metric. A drop here is the earliest warning that a
-    prompt change has made the model start inventing things.
-    """
-
     model_config = ConfigDict(frozen=True)
 
     total_fields: int = 0
@@ -242,12 +195,10 @@ class GroundingStats(BaseModel):
 
     @property
     def grounding_rate(self) -> float:
-        """Fraction of extracted fields that carry any citation at all."""
         return self.grounded_fields / self.total_fields if self.total_fields else 0.0
 
     @property
     def citation_validity_rate(self) -> float:
-        """Fraction of citations whose span really contains the quoted text."""
         return self.valid_citations / self.total_citations if self.total_citations else 1.0
 
     def summary(self) -> str:
@@ -260,8 +211,6 @@ class GroundingStats(BaseModel):
 
 
 class CitedResume(BaseModel):
-    """A fully parsed resume where every value points back at the source."""
-
     document_id: str
     basics: Basics = Field(default_factory=Basics)
     work: list[WorkExperience] = Field(default_factory=list)
@@ -275,14 +224,7 @@ class CitedResume(BaseModel):
         description="Sections whose extraction failed. Recorded, never silently dropped.",
     )
 
-    # -- traversal -----------------------------------------------------------
-
     def all_cited_values(self) -> list[Cited[str]]:
-        """Every ``Cited`` field in the resume, flattened.
-
-        Used for grounding statistics and for the fairness harness, which needs to
-        walk every value to find the ones worth perturbing.
-        """
         out: list[Cited[str]] = []
 
         def push(*values: Cited[str] | None) -> None:
@@ -315,13 +257,10 @@ class CitedResume(BaseModel):
         return out
 
     def verify(self, document_text: str) -> VerificationResult:
-        """Re-verify every citation against the source. Cheap, so do it freely."""
         result = VerificationResult(total=0, valid=0)
         for value in self.all_cited_values():
             result = result + value.verify(document_text)
         return result
-
-    # -- convenience ---------------------------------------------------------
 
     @property
     def skill_names(self) -> list[str]:

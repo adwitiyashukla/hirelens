@@ -1,5 +1,3 @@
-"""The evaluation harness: golden set, metrics, baselines, and the regression gate."""
-
 from hirelens.evals.baselines import (
     Baseline,
     BM25Baseline,

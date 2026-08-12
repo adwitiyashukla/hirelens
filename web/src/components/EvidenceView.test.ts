@@ -1,16 +1,3 @@
-/**
- * Tests for the span flattening that drives the highlighter.
- *
- * Worth testing rather than eyeballing, because the failure mode is subtle:
- * overlapping citations render *almost* correctly, with a word or two silently
- * duplicated or dropped in the middle of a resume. That is exactly the kind of
- * bug that survives a demo and then undermines the one claim the project makes,
- * which is that the highlighted text is the real source text.
- *
- * The invariant these tests enforce: concatenating every segment with the gaps
- * between them must reproduce the input string exactly.
- */
-
 import { describe, expect, it } from "vitest";
 import { segmentize, type EvidenceSpan } from "./EvidenceView";
 
@@ -23,7 +10,6 @@ const span = (
   verified = true,
 ): EvidenceSpan => ({ start, end, requirementId, verified });
 
-/** Rebuild the original string from the segments plus the untouched gaps. */
 function reconstruct(text: string, spans: EvidenceSpan[]): string {
   const segments = segmentize(text, spans);
   let out = "";
@@ -56,7 +42,7 @@ describe("segmentize", () => {
   });
 
   it("splits overlapping spans into three parts and attributes the middle to both", () => {
-    // "payment services" and "services in Python" share "services".
+
     const segments = segmentize(TEXT, [span(6, 22, "r1"), span(14, 32, "r2")]);
     expect(segments).toHaveLength(3);
     expect(segments[0]!.requirementIds).toEqual(["r1"]);
@@ -87,8 +73,7 @@ describe("segmentize", () => {
   });
 
   it("discards spans that fall outside the document", () => {
-    // Stale offsets from a document that was re-ingested would otherwise throw
-    // off every later segment, corrupting the whole render rather than one span.
+
     expect(segmentize(TEXT, [span(5, 5000, "r1")])).toEqual([]);
     expect(segmentize(TEXT, [span(-4, 10, "r1")])).toEqual([]);
     expect(segmentize(TEXT, [span(10, 4, "r1")])).toEqual([]);

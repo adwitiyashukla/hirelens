@@ -1,5 +1,3 @@
-"""Resume upload and retrieval."""
-
 from __future__ import annotations
 
 import logging
@@ -25,8 +23,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
-#: Resumes are small. Anything larger is a mistake or an attack, and rejecting it
-#: early keeps a bad upload from occupying memory and a database row.
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 SUPPORTED_SUFFIXES = {".pdf", ".docx", ".doc", ".txt", ".md"}
@@ -34,20 +30,9 @@ SUPPORTED_SUFFIXES = {".pdf", ".docx", ".doc", ".txt", ".md"}
 
 @router.post("", response_model=UploadResponse)
 async def upload_documents(
-    files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI dependency form
+    files: list[UploadFile] = File(...),
     session: AsyncSession = SessionDep,
 ) -> UploadResponse:
-    """Upload one or more resumes.
-
-    **Partial success is the design.** A batch of thirty resumes with one corrupt
-    file returns twenty-nine accepted and one rejected with a reason, rather than a
-    400 that forces the recruiter to work out which file was the problem and start
-    over.
-
-    Uploads are idempotent. The document id is the SHA-256 of the file bytes, so
-    the same resume submitted twice resolves to the same record and reuses its
-    cached extraction. ``created`` reports which happened.
-    """
     accepted: list[UploadResult] = []
     rejected: list[RejectedUpload] = []
     repository = DocumentRepository(session)
@@ -113,13 +98,6 @@ async def upload_documents(
 
 
 def _ingest(payload: bytes, filename: str, suffix: str):
-    """Ingest from bytes.
-
-    The readers take a path because PyMuPDF and python-docx both want one, so the
-    upload is written to a temporary file and removed immediately. Keeping the
-    canonical text and offsets in the database means this file is never needed
-    again.
-    """
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / f"upload{suffix}"
         path.write_bytes(payload)
@@ -145,12 +123,6 @@ async def get_document(document_id: str, session: AsyncSession = SessionDep) -> 
 
 @router.get("/{document_id}/text", response_model=DocumentText)
 async def get_document_text(document_id: str, session: AsyncSession = SessionDep) -> DocumentText:
-    """The canonical text plus its offset map.
-
-    This is what makes citation highlighting possible on the client: every span in
-    an assessment indexes into exactly this string, and the blocks carry the page
-    and bounding box for each line.
-    """
     document = await DocumentRepository(session).get(document_id)
     if document is None:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
@@ -166,7 +138,6 @@ async def get_document_text(document_id: str, session: AsyncSession = SessionDep
 
 @router.get("/{document_id}/raw")
 async def get_document_raw(document_id: str, session: AsyncSession = SessionDep) -> Response:
-    """The original file, so the frontend can render the real PDF."""
     document = await DocumentRepository(session).get(document_id)
     if document is None:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")

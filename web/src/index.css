@@ -1,22 +1,7 @@
-/*
- * Hand-written CSS rather than a utility framework.
- *
- * The evidence highlighter needs `<mark>` elements whose colour is driven by
- * verdict and whose active state changes on hover from a sibling component,
- * which in a utility framework means a pile of conditional class strings
- * anyway. One stylesheet with named classes is easier to read, and the
- * production bundle is about 14 kB of CSS with no build plugin.
- *
- * The visual system, briefly: one accent colour used only for interaction, a
- * five-step semantic scale used only for verdicts, and everything else in
- * greyscale. Colour that carries meaning stops carrying it when everything is
- * coloured.
- */
-
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 
 :root {
-  /* Surfaces, lightest last. Four steps is enough to build any depth needed. */
+
   --bg: #080b12;
   --bg-elevated: #0d1119;
   --surface: #121724;
@@ -33,8 +18,6 @@
   --accent-bright: #8ba7ff;
   --accent-glow: rgba(109, 143, 255, 0.14);
 
-  /* Verdict scale, dark to light. Deliberately not a rainbow: it reads as one
-     ordered dimension, because that is what it is. */
   --v-strong: #34d399;
   --v-clear: #7dd88f;
   --v-partial: #f0c05a;
@@ -75,8 +58,6 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 
-  /* Two very soft radial washes. Enough to stop the page reading as a flat
-     rectangle, faint enough that nothing competes with the data. */
   background:
     radial-gradient(900px 500px at 12% -10%, rgba(109, 143, 255, 0.09), transparent 60%),
     radial-gradient(800px 450px at 95% 0%, rgba(52, 211, 153, 0.05), transparent 55%),
@@ -120,8 +101,6 @@ code,
   font-size: 0.9em;
   font-variant-ligatures: none;
 }
-
-/* -- layout ------------------------------------------------------------- */
 
 .app {
   display: flex;
@@ -266,8 +245,6 @@ code,
   }
 }
 
-/* -- surfaces ----------------------------------------------------------- */
-
 .card {
   background: linear-gradient(180deg, var(--surface) 0%, var(--bg-elevated) 100%);
   border: 1px solid var(--border);
@@ -285,7 +262,6 @@ code,
   margin-bottom: 14px;
 }
 
-/* A numbered step marker, so the three-stage flow reads as a sequence. */
 .step {
   display: flex;
   align-items: center;
@@ -328,8 +304,6 @@ code,
   border-radius: var(--radius);
   font-size: 13px;
 }
-
-/* -- controls ----------------------------------------------------------- */
 
 button.primary,
 button.ghost {
@@ -448,8 +422,6 @@ label.field > span {
   flex-wrap: wrap;
 }
 
-/* -- badges ------------------------------------------------------------- */
-
 .badge {
   display: inline-flex;
   align-items: center;
@@ -510,8 +482,6 @@ label.field > span {
   white-space: nowrap;
 }
 
-/* -- tables ------------------------------------------------------------- */
-
 table.grid {
   width: 100%;
   border-collapse: separate;
@@ -559,8 +529,6 @@ table.grid tbody tr:last-child td {
   font-variant-numeric: tabular-nums;
 }
 
-/* Rank pill in the shortlist. The top three are emphasised because that is
-   the part of a shortlist anyone actually reads. */
 .rank {
   display: grid;
   place-items: center;
@@ -581,7 +549,6 @@ table.grid tbody tr:last-child td {
   color: var(--accent-bright);
 }
 
-/* Initials disc, so rows are scannable by shape as well as by text. */
 .who {
   display: flex;
   align-items: center;
@@ -611,8 +578,6 @@ table.grid tbody tr:last-child td {
   font-size: 11px;
   color: var(--text-faint);
 }
-
-/* -- score with confidence interval ------------------------------------- */
 
 .score {
   display: flex;
@@ -664,8 +629,6 @@ table.grid tbody tr:last-child td {
   box-shadow: 0 0 6px var(--accent);
 }
 
-/* -- progress ----------------------------------------------------------- */
-
 .progress {
   height: 7px;
   background: var(--surface-2);
@@ -682,7 +645,6 @@ table.grid tbody tr:last-child td {
   box-shadow: 0 0 12px var(--accent-glow);
 }
 
-/* A run in flight should look alive rather than stalled. */
 .progress.live > div {
   background-image: linear-gradient(
     110deg,
@@ -699,8 +661,6 @@ table.grid tbody tr:last-child td {
     background-position: -200% 0;
   }
 }
-
-/* -- requirement list --------------------------------------------------- */
 
 .req {
   border: 1px solid var(--border);
@@ -770,8 +730,6 @@ table.grid tbody tr:last-child td {
   line-height: 1.6;
 }
 
-/* -- evidence pane ------------------------------------------------------ */
-
 .evidence {
   position: sticky;
   top: 78px;
@@ -820,8 +778,6 @@ table.grid tbody tr:last-child td {
   box-shadow: 0 0 0 1px var(--danger);
 }
 
-/* -- metrics ------------------------------------------------------------ */
-
 .metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -859,8 +815,6 @@ table.grid tbody tr:last-child td {
   line-height: 1.4;
 }
 
-/* -- banners ------------------------------------------------------------ */
-
 .banner {
   border-radius: var(--radius-sm);
   padding: 12px 14px;
@@ -895,8 +849,6 @@ table.grid tbody tr:last-child td {
   border-color: color-mix(in srgb, var(--v-partial) 42%, transparent);
   background: color-mix(in srgb, var(--v-partial) 9%, transparent);
 }
-
-/* -- dropzone ----------------------------------------------------------- */
 
 .dropzone {
   border: 1.5px dashed var(--border-strong);
@@ -965,8 +917,6 @@ table.grid tbody tr:last-child td {
     transform: rotate(360deg);
   }
 }
-
-/* -- claims (the "how it works" page) ----------------------------------- */
 
 .claim {
   display: grid;

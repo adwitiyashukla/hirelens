@@ -1,5 +1,3 @@
-"""Counterfactual fairness audit: perturb demographics, measure what moves."""
-
 from hirelens.audit.perturbations import (
     DEFAULT_AXES,
     Axis,

@@ -1,28 +1,3 @@
-"""Job descriptions compiled into scoring rubrics.
-
-The single biggest functional difference between HireLens and a typical resume
-scorer is that the rubric is **derived from the job description at runtime**
-rather than hardcoded. A hardcoded rubric ("open source 35, self projects 30,
-production 25, technical skills 10") is a rubric for exactly one role at exactly
-one company, and scoring a data analyst or a designer against it is meaningless.
-
-A compiled rubric is a list of **atomic requirements**. Atomic matters: "5 years
-of Python and experience leading a team" is two requirements with different
-evidence and possibly different answers, and collapsing them into one produces a
-score nobody can act on. Each requirement carries:
-
-* a **weight**, so a must-have counts for more than a nice-to-have,
-* a **kind**, so a missing must-have can gate the candidate rather than just
-  costing points,
-* an **evidence hint**, a short phrase used as the retrieval query, which is what
-  connects the rubric to the resume.
-
-Weights are normalised at construction so every rubric sums to 100 regardless of
-how many requirements the model produced. Without that, a JD that compiles into
-twelve requirements would score systematically differently from one that compiles
-into six, and cross-role comparisons would be nonsense.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -39,8 +14,6 @@ class RequirementKind(StrEnum):
 
 
 class RequirementCategory(StrEnum):
-    """Coarse grouping, used only for presentation and reporting."""
-
     TECHNICAL_SKILL = "technical_skill"
     EXPERIENCE = "experience"
     DOMAIN = "domain"
@@ -49,9 +22,6 @@ class RequirementCategory(StrEnum):
     OTHER = "other"
 
 
-#: Default relative weights by kind, applied before normalisation. A must-have is
-#: worth roughly three times a nice-to-have, which matches how human screeners
-#: describe their own weighting when asked.
 _KIND_WEIGHTS: dict[RequirementKind, float] = {
     RequirementKind.MUST_HAVE: 3.0,
     RequirementKind.NICE_TO_HAVE: 1.0,
@@ -60,8 +30,6 @@ _KIND_WEIGHTS: dict[RequirementKind, float] = {
 
 
 class RawRequirement(BaseModel):
-    """One requirement as the model returns it, before normalisation."""
-
     model_config = ConfigDict(extra="ignore")
 
     text: str = Field(
@@ -88,8 +56,6 @@ class RawRubric(BaseModel):
 
 
 class Requirement(BaseModel):
-    """A normalised, weighted requirement ready to be judged."""
-
     model_config = ConfigDict(frozen=True)
 
     requirement_id: str
@@ -101,13 +67,6 @@ class Requirement(BaseModel):
 
     @property
     def query(self) -> str:
-        """The text used to retrieve evidence for this requirement.
-
-        The hint is preferred because it is phrased in resume vocabulary. A JD says
-        "must be comfortable owning services in production"; a resume says
-        "deployed and operated the payments service". Searching with the hint
-        retrieves the bullet; searching with the JD sentence often does not.
-        """
         return self.evidence_hint or self.text
 
     @property
@@ -116,8 +75,6 @@ class Requirement(BaseModel):
 
 
 class Rubric(BaseModel):
-    """A compiled job description."""
-
     model_config = ConfigDict(frozen=True)
 
     rubric_id: str
@@ -134,8 +91,6 @@ class Rubric(BaseModel):
         if abs(total - 100.0) > 0.5:
             raise ValueError(f"requirement weights must sum to 100, got {total:.2f}")
         return self
-
-    # -- views ---------------------------------------------------------------
 
     def of_kind(self, kind: RequirementKind) -> list[Requirement]:
         return [r for r in self.requirements if r.kind is kind]
@@ -154,16 +109,8 @@ class Rubric(BaseModel):
         ]
         return f"{self.role_title or 'role'}: {', '.join(parts)}"
 
-    # -- construction --------------------------------------------------------
-
     @classmethod
     def from_raw(cls, raw: RawRubric, *, source_text: str = "") -> Rubric:
-        """Normalise a model-produced rubric into a scoreable one.
-
-        Deduplicates on normalised text (models routinely emit "Python" twice with
-        slightly different phrasing), assigns stable ids, and rescales weights to
-        sum to 100.
-        """
         seen: set[str] = set()
         kept: list[RawRequirement] = []
         for item in raw.requirements:
@@ -194,8 +141,6 @@ class Rubric(BaseModel):
             for index, (item, weight) in enumerate(zip(kept, raw_weights, strict=True))
         )
 
-        # Rounding can leave the total a hair off 100; absorb the drift into the
-        # first requirement rather than letting the validator reject a valid rubric.
         drift = 100.0 - sum(r.weight for r in requirements)
         if abs(drift) > 1e-9:
             first = requirements[0]

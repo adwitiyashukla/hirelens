@@ -1,5 +1,3 @@
-"""Evidence chunking, local embeddings, and hybrid retrieval."""
-
 from hirelens.retrieve.chunking import chunk_resume, coverage, merge_overlapping
 from hirelens.retrieve.embeddings import (
     Embedder,

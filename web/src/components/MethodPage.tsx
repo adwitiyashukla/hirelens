@@ -1,13 +1,3 @@
-/**
- * What the system claims, and how each claim is checked.
- *
- * This page exists because the interesting part of the project is not that an
- * LLM can read a resume. It is the four properties below, each of which is
- * enforced by a subsystem rather than asserted in a README. The commands are
- * included so a reader can reproduce the numbers rather than take them on
- * trust.
- */
-
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { Health } from "../api/types";

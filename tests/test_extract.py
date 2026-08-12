@@ -1,8 +1,3 @@
-"""Phase 2 tests: span location, PII masking, segmentation, and extraction.
-
-All of it runs against a scripted fake provider, so no key and no network.
-"""
-
 from __future__ import annotations
 
 import json
@@ -50,11 +45,6 @@ def resume_doc(tmp_path: Path):
     return read_document(path)
 
 
-# ---------------------------------------------------------------------------
-# Span locator
-# ---------------------------------------------------------------------------
-
-
 class TestSpanLocator:
     def test_exact_match(self) -> None:
         locator = SpanLocator(RESUME)
@@ -64,7 +54,6 @@ class TestSpanLocator:
         assert RESUME[found.span.start : found.span.end] == "Backend Engineer, Acme Corp"
 
     def test_whitespace_normalised_match(self) -> None:
-        """Models routinely re-space a quote they copied across a line break."""
         locator = SpanLocator(RESUME)
         found = locator.locate("Backend   Engineer,    Acme Corp")
         assert found is not None
@@ -84,17 +73,14 @@ class TestSpanLocator:
         assert "p99 checkout latency" in RESUME[found.span.start : found.span.end]
 
     def test_invented_quote_is_not_located(self) -> None:
-        """The whole point: text that is not in the document must not resolve."""
         locator = SpanLocator(RESUME)
         assert locator.locate("led a team of fifteen engineers at Google") is None
 
     def test_ambiguous_short_quote_is_refused(self) -> None:
-        """'Go' appears twice here; picking one would highlight the wrong line."""
         locator = SpanLocator(RESUME)
         assert locator.locate("Go") is None
 
     def test_unique_short_quote_is_accepted(self) -> None:
-        """Plenty of real skills are short. A unique match cannot be misattributed."""
         locator = SpanLocator("SKILLS\nC, Rust, Elixir\n")
         found = locator.locate("C")
         assert found is not None
@@ -111,7 +97,6 @@ class TestSpanLocator:
         assert found.span.start >= skills_start
 
     def test_short_match_respects_word_boundaries(self) -> None:
-        """'Go' must not match inside 'Google' or 'Django'."""
         locator = SpanLocator("Worked at Google using Django and Go daily")
         found = locator.locate("Go")
         assert found is not None
@@ -143,11 +128,6 @@ class TestSpanLocator:
         locator = SpanLocator(RESUME)
         results = locator.locate_all(["kvstore", "invented achievement here", "Kafka"])
         assert set(results) == {"kvstore", "Kafka"}
-
-
-# ---------------------------------------------------------------------------
-# PII
-# ---------------------------------------------------------------------------
 
 
 class TestPIIDetection:
@@ -185,7 +165,6 @@ class TestPIIDetection:
 
 class TestRedaction:
     def test_masking_preserves_length(self) -> None:
-        """The invariant everything downstream depends on."""
         report = redact(RESUME)
         assert len(report.redacted_text) == len(RESUME)
 
@@ -195,13 +174,11 @@ class TestRedaction:
         assert "priya.n@example.com" not in report.redacted_text
 
     def test_technical_content_survives(self) -> None:
-        """Blind mode must remove identity, not signal."""
         report = redact(RESUME)
         for keeper in ["Backend Engineer", "p99 checkout latency", "kvstore", "PostgreSQL"]:
             assert keeper in report.redacted_text
 
     def test_github_url_is_kept_by_default(self) -> None:
-        """It is real professional signal and the enrichment stage needs it."""
         report = redact(RESUME)
         assert "github.com/pnarayanan" in report.redacted_text
 
@@ -223,11 +200,6 @@ class TestRedaction:
         assert "name" in redact(RESUME).summary()
 
 
-# ---------------------------------------------------------------------------
-# Sections
-# ---------------------------------------------------------------------------
-
-
 class TestSectionClassification:
     @pytest.mark.parametrize(
         ("heading", "expected"),
@@ -245,7 +217,6 @@ class TestSectionClassification:
         assert classify_heading(heading) is expected
 
     def test_work_experience_beats_experience(self) -> None:
-        """Longest keyword must win, or the mapping becomes order-dependent."""
         assert classify_heading("Work Experience") is SectionKind.WORK
 
     def test_unknown_heading_returns_none(self) -> None:
@@ -269,7 +240,7 @@ class TestSegmentation:
         section_map = segment(resume_doc)
         work = section_map.text_for(SectionKind.WORK, resume_doc)
         assert "Acme Corp" in work
-        assert "kvstore" not in work  # projects must not leak into work
+        assert "kvstore" not in work
 
     def test_heading_line_is_excluded_from_the_body(self, resume_doc) -> None:
         section_map = segment(resume_doc)
@@ -286,21 +257,7 @@ class TestSegmentation:
         assert len(section_map.sections) == 1
 
 
-# ---------------------------------------------------------------------------
-# Extractor
-# ---------------------------------------------------------------------------
-
-
 class ScriptedProvider(LLMProvider):
-    """Returns a canned JSON body per section, matched on conversation content.
-
-    Matching scans every message rather than only the last one. On a repair turn
-    the conversation is [system, original request, bad reply, repair request], and
-    a real model still sees the original request in its context. Matching only the
-    last message would make the fake fall through to a default on every repair,
-    which silently turns "the model keeps failing" into "the model recovered".
-    """
-
     name = "scripted"
     model = "scripted-model"
 
@@ -360,7 +317,6 @@ SCRIPT = {
                         "value": "Cut p99 latency to 180ms",
                         "quote": "Cut p99 checkout latency from 1.2s to 180ms",
                     },
-                    # A hallucination: this text is nowhere in the resume.
                     {
                         "value": "Managed a team of 12",
                         "quote": "Managed a team of 12 engineers across three offices",
@@ -424,7 +380,6 @@ class TestResumeExtractor:
     async def test_hallucinated_quote_is_reported_not_cited(
         self, resume_doc, tmp_path: Path
     ) -> None:
-        """The headline behaviour of the whole project."""
         extractor = build_extractor(tmp_path, ScriptedProvider(SCRIPT))
         resume = (await extractor.extract(resume_doc, blind=False)).resume
 
@@ -442,11 +397,10 @@ class TestResumeExtractor:
         resume = (await extractor.extract(resume_doc, blind=False)).resume
 
         assert resume.grounding.total_fields > 0
-        assert 0.0 < resume.grounding.grounding_rate < 1.0  # one deliberate hallucination
+        assert 0.0 < resume.grounding.grounding_rate < 1.0
         assert resume.grounding.citation_validity_rate == 1.0
 
     async def test_citations_carry_a_page_number(self, resume_doc, tmp_path: Path) -> None:
-        """The frontend needs the page to scroll to before it can draw a highlight."""
         extractor = build_extractor(tmp_path, ScriptedProvider(SCRIPT))
         resume = (await extractor.extract(resume_doc, blind=False)).resume
 
@@ -467,12 +421,11 @@ class TestResumeExtractor:
 
         work_prompt = next(p for p in provider.prompts if "paid professional experience" in p)
         assert "Acme Corp" in work_prompt
-        assert "kvstore" not in work_prompt  # projects did not leak in
+        assert "kvstore" not in work_prompt
 
     async def test_a_failing_section_does_not_sink_the_parse(
         self, resume_doc, tmp_path: Path
     ) -> None:
-        """One unparseable section must cost that section, not the candidate."""
         broken = dict(SCRIPT)
         broken["Extract personal, academic"] = {"projects": "this is not a list"}
         provider = ScriptedProvider(broken)
@@ -481,7 +434,6 @@ class TestResumeExtractor:
 
         assert "projects" in result.resume.failed_sections
         assert not result.resume.projects
-        # Every other section still produced data.
         assert result.resume.work
         assert result.resume.education
         assert result.resume.skills
@@ -497,7 +449,7 @@ class TestResumeExtractor:
         await extractor.extract(resume_doc, blind=False)
 
         repair_turns = [p for p in provider.prompts if "did not validate" in p]
-        assert len(repair_turns) == 2  # initial attempt plus two repairs
+        assert len(repair_turns) == 2
 
     async def test_blind_mode_hides_identity_from_the_prompt(
         self, resume_doc, tmp_path: Path

@@ -16,10 +16,9 @@ human judgement, and every score is audited for demographic bias.
 
 ---
 
-> **Status: all 9 phases built. 397 Python tests and 9 dashboard tests passing.** The screening
-> pipeline, the evaluation harness, the bias audit, the HTTP API and the React dashboard are all
-> in the repository and exercised in CI. The build plan is in
-> [`docs/DESIGN.md`](docs/DESIGN.md#8-build-plan).
+> **Status: 397 Python tests and 9 dashboard tests passing.** The screening pipeline, the
+> evaluation harness, the bias audit, the HTTP API and the React dashboard are all in the
+> repository and exercised in CI.
 >
 > The system has been run end to end against two independent providers, Gemini and Groq. Doing
 > that surfaced three real bugs that a single-provider project would never have found. They are
@@ -96,7 +95,7 @@ exists because an earlier version of this system did exactly that.
 
 > **Two captures are not yet taken:** the ranked shortlist and the evidence highlighter. Both need
 > a run where every candidate scores cleanly, and free-tier quotas made that slow to arrange.
-> `docs/screenshots/README.md` specifies them precisely. Nothing here is mocked.
+> Nothing here is mocked.
 
 What the interface refuses to do is as deliberate as what it does:
 
@@ -590,8 +589,7 @@ same mistake became a runtime `undefined`.
 
 ## Design notes
 
-The full reasoning, including the parts that are still open questions, is in
-[`docs/DESIGN.md`](docs/DESIGN.md). A few decisions worth calling out:
+A few decisions worth calling out:
 
 - **Plain `httpx` instead of vendor SDKs.** Three SDKs means three auth conventions, three retry
   behaviours and three async styles to reconcile. Each provider needs about twenty lines of

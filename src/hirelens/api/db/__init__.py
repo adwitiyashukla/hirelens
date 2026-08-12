@@ -1,5 +1,3 @@
-"""Persistence: models, sessions, repositories."""
-
 from hirelens.api.db.models import Assessment, Base, Document, JobPosting, RunStatus, ScreeningRun
 from hirelens.api.db.repository import (
     AssessmentRepository,

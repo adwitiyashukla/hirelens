@@ -1,28 +1,3 @@
-"""The golden set itself: twelve candidate profiles and three job descriptions.
-
-Built as code rather than checked in as data so the reasoning behind each profile
-is visible and reviewable. ``notes`` on each profile records what it exists to
-test, which is the part that stops a golden set silently rotting into whatever
-happened to be easy.
-
-The set is designed around three properties.
-
-**Spread.** Profiles span clear-hire to clear-reject against at least one job.
-A set where everyone is mediocre cannot distinguish a good ranker from a bad one,
-because there is no ranking to get right.
-
-**Cross-role contrast.** Twelve candidates against three jobs gives thirty-six
-pairs, and the same candidate is a strong fit for one job and a poor fit for
-another. This tests the thing that actually matters: that the rubric is doing the
-work, not a general "is this a good engineer" prior. A system that ranks the same
-candidate first for every role has learned nothing about the job description.
-
-**Deliberate traps.** Several profiles exist to catch specific failure modes:
-keyword stuffing without substance, adjacent-but-not-equivalent technology,
-impressive-sounding work with no measurable outcome, and a genuinely strong
-candidate whose resume is badly written.
-"""
-
 from __future__ import annotations
 
 from hirelens.evals.profiles import (
@@ -34,10 +9,6 @@ from hirelens.evals.profiles import (
     QualityTier,
     Role,
 )
-
-# ---------------------------------------------------------------------------
-# Jobs
-# ---------------------------------------------------------------------------
 
 BACKEND_JD = """\
 Senior Backend Engineer, Payments Platform
@@ -105,17 +76,11 @@ JOBS = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Profiles
-# ---------------------------------------------------------------------------
-
-
 def _d(name: str, **kwargs: str) -> Demographics:
     return Demographics(name=name, **kwargs)
 
 
 PROFILES: tuple[CandidateProfile, ...] = (
-    # -- Backend, strong -----------------------------------------------------
     CandidateProfile(
         candidate_id="c01",
         demographics=_d("Alex Mercer", university="State University", location="Berlin"),
@@ -157,7 +122,6 @@ PROFILES: tuple[CandidateProfile, ...] = (
         ),
         skills=("Go", "Rust", "Python", "Kafka", "Kubernetes", "Terraform", "PostgreSQL", "gRPC"),
     ),
-    # -- Backend, solid ------------------------------------------------------
     CandidateProfile(
         candidate_id="c02",
         demographics=_d("Priya Raman", university="State University", location="Bengaluru"),
@@ -187,7 +151,6 @@ PROFILES: tuple[CandidateProfile, ...] = (
         ),
         skills=("Go", "Python", "PostgreSQL", "Kafka", "Kubernetes", "Terraform"),
     ),
-    # -- Backend, adjacent technology trap -----------------------------------
     CandidateProfile(
         candidate_id="c03",
         demographics=_d("Jordan Blake", university="State University", location="Manchester"),
@@ -213,7 +176,6 @@ PROFILES: tuple[CandidateProfile, ...] = (
         ),
         skills=("Java", "Spring", "Docker", "RabbitMQ", "MySQL"),
     ),
-    # -- Backend, keyword stuffing trap --------------------------------------
     CandidateProfile(
         candidate_id="c04",
         demographics=_d("Sam Okafor", university="State University", location="Lagos"),
@@ -249,7 +211,6 @@ PROFILES: tuple[CandidateProfile, ...] = (
             "distributed systems",
         ),
     ),
-    # -- ML, strong ----------------------------------------------------------
     CandidateProfile(
         candidate_id="c05",
         demographics=_d("Riley Chen", university="State University", location="Toronto"),
@@ -292,7 +253,6 @@ PROFILES: tuple[CandidateProfile, ...] = (
         ),
         skills=("Python", "PyTorch", "transformers", "FAISS", "Elasticsearch", "MLflow", "Docker"),
     ),
-    # -- ML, prototype-only trap ---------------------------------------------
     CandidateProfile(
         candidate_id="c06",
         demographics=_d("Taylor Nunes", university="State University", location="Lisbon"),
@@ -336,7 +296,6 @@ PROFILES: tuple[CandidateProfile, ...] = (
             "Streamlit",
         ),
     ),
-    # -- ML, research-heavy, production-light --------------------------------
     CandidateProfile(
         candidate_id="c07",
         demographics=_d("Morgan Ellis", university="State University", location="Edinburgh"),
@@ -369,7 +328,6 @@ PROFILES: tuple[CandidateProfile, ...] = (
         skills=("Python", "PyTorch", "transformers", "NumPy", "LaTeX"),
         awards=("Best paper award, ACL workshop on multilingual NLP, 2022",),
     ),
-    # -- Frontend, strong ----------------------------------------------------
     CandidateProfile(
         candidate_id="c08",
         demographics=_d("Devin Park", university="State University", location="Seoul"),
@@ -412,7 +370,6 @@ PROFILES: tuple[CandidateProfile, ...] = (
         ),
         skills=("TypeScript", "React", "CSS", "Storybook", "Playwright", "Figma", "Vite"),
     ),
-    # -- Frontend, solid but no design system --------------------------------
     CandidateProfile(
         candidate_id="c09",
         demographics=_d("Casey Adeyemi", university="State University", location="Dublin"),
@@ -434,7 +391,6 @@ PROFILES: tuple[CandidateProfile, ...] = (
         ),
         skills=("JavaScript", "TypeScript", "React", "Next.js", "CSS", "Cypress"),
     ),
-    # -- Career changer, weak everywhere -------------------------------------
     CandidateProfile(
         candidate_id="c10",
         demographics=_d("Robin Vasquez", university="State University", location="Madrid"),
@@ -460,7 +416,6 @@ PROFILES: tuple[CandidateProfile, ...] = (
         ),
         skills=("JavaScript", "React", "HTML", "CSS", "Python"),
     ),
-    # -- Strong engineer, badly written resume -------------------------------
     CandidateProfile(
         candidate_id="c11",
         demographics=_d("Kim Fontaine", university="State University", location="Montreal"),
@@ -488,7 +443,6 @@ PROFILES: tuple[CandidateProfile, ...] = (
         ),
         skills=("Go", "Kubernetes", "Kafka", "PostgreSQL"),
     ),
-    # -- Generalist, moderate fit for two roles ------------------------------
     CandidateProfile(
         candidate_id="c12",
         demographics=_d("Avery Lindqvist", university="State University", location="Stockholm"),
@@ -525,5 +479,4 @@ PROFILES: tuple[CandidateProfile, ...] = (
 
 
 def build_golden_set() -> GoldenSet:
-    """The full golden set: 12 profiles times 3 jobs, so 36 labelled pairs."""
     return GoldenSet(profiles=PROFILES, jobs=JOBS)

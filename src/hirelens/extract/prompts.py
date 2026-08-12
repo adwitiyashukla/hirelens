@@ -1,21 +1,3 @@
-"""Extraction prompts.
-
-Prompts are code. They are versioned, reviewed, and regression-tested by the
-evaluation harness, so they live in a normal Python module rather than being
-buried as string literals at the call site or scattered across template files.
-
-Every prompt here enforces one rule above all others:
-
-    Do not infer. Do not summarise. Quote verbatim.
-
-The ``quote`` field is what makes citation possible, and it only works if the
-model copies text character for character. A model that helpfully tidies a quote
-produces a citation the locator cannot resolve, which shows up as a drop in the
-grounding rate. So the instruction is repeated, demonstrated with an example, and
-paired with an explicit "leave it empty rather than paraphrase" escape hatch,
-because an honestly empty quote is far better than a plausible invented one.
-"""
-
 from __future__ import annotations
 
 from hirelens.extract.sections import SectionKind
@@ -52,7 +34,6 @@ a correct extraction is:
 
 Note that "value" may be normalised but "quote" is copied exactly from the input.\
 """
-
 
 _INSTRUCTIONS: dict[SectionKind, str] = {
     SectionKind.BASICS: """\
@@ -130,7 +111,6 @@ Extract awards, honours, certifications, and publications.
 
 
 def build_extraction_prompt(kind: SectionKind, section_text: str) -> str:
-    """The user-turn prompt for one section."""
     instructions = _INSTRUCTIONS.get(kind, _INSTRUCTIONS[SectionKind.BASICS])
     return (
         f"{instructions}\n\n"
@@ -141,7 +121,6 @@ def build_extraction_prompt(kind: SectionKind, section_text: str) -> str:
 
 
 def supported_kinds() -> tuple[SectionKind, ...]:
-    """Sections we know how to extract, in the order the CLI reports them."""
     return (
         SectionKind.BASICS,
         SectionKind.WORK,

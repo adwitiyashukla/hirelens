@@ -1,21 +1,3 @@
-"""Deterministic risk flags: things a human should look at.
-
-Every check here is a rule, not a model call. That is deliberate on three counts:
-it is free, it is perfectly reproducible so it cannot move the eval metrics
-around, and most importantly it is **auditable**. A recruiter can be told exactly
-why a flag fired, and a candidate could be told too.
-
-**Flags never change the score.** They are observations. This is the most
-important line in the module. An employment gap can be caregiving, illness,
-study, visa processing, or a startup that did not work out, and every one of those
-correlates with protected characteristics. Deducting points for a gap would encode
-precisely the bias this project exists to detect. The same applies to a short
-tenure or a missing degree. We surface the fact and a human decides.
-
-The flags that *are* about quality (vague claims, unlinked projects, ungrounded
-extractions) are about the evidence, not the person, and are still advisory.
-"""
-
 from __future__ import annotations
 
 import re
@@ -23,8 +5,6 @@ import re
 from hirelens.schemas.assessment import CandidateAssessment, RiskFlag, RiskLevel
 from hirelens.schemas.resume import CitedResume
 
-# A claim with no number in it is not necessarily weak, but a resume made
-# entirely of them is impossible to verify and worth flagging.
 _HAS_NUMBER = re.compile(r"\d")
 
 _VAGUE_PHRASES = (
@@ -57,22 +37,12 @@ _YEAR = re.compile(r"(19|20)\d{2}")
 _MONTH_WORD = re.compile(r"[a-z]{3,9}", re.IGNORECASE)
 _NUMERIC_DATE = re.compile(r"\b(\d{1,2})[/-](\d{4})\b")
 
-#: Gap in months before we mention it. Below a year is ordinary job-hunting and
-#: flagging it would create noise that trains the reader to ignore the flags.
 _GAP_MONTHS = 12
 
-#: Below this share of grounded fields, the parse itself is suspect and the score
-#: built on it should not be trusted without a look at the document.
 _MIN_GROUNDING_RATE = 0.7
 
 
 def parse_month_index(value: str) -> int | None:
-    """Turn a resume date into a month index, or None if unparseable.
-
-    Resume dates are written every possible way. We handle "Jan 2023",
-    "January 2023", "2023", "03/2022" and "present", and give up on anything else
-    rather than guessing, because a wrong date produces a phantom gap flag.
-    """
     text = value.strip().lower()
     if not text:
         return None
@@ -96,18 +66,15 @@ def parse_month_index(value: str) -> int | None:
         if month:
             return year * 12 + month
 
-    # Year only. Assume mid-year so a "2022 to 2023" gap is not overstated.
     return year * 12 + 6
 
 
-#: Sentinel for "still there". Far enough in the future to sort last.
 _PRESENT = 99999 * 12
 
 
 def detect_risks(
     resume: CitedResume, assessment: CandidateAssessment | None = None
 ) -> list[RiskFlag]:
-    """Every risk flag for one candidate."""
     flags: list[RiskFlag] = []
 
     flags.extend(_employment_gaps(resume))
@@ -120,15 +87,7 @@ def detect_risks(
     return flags
 
 
-# ---------------------------------------------------------------------------
-
-
 def _employment_gaps(resume: CitedResume) -> list[RiskFlag]:
-    """Periods of more than a year between roles.
-
-    Reported as a neutral observation with no score impact, for the reasons in the
-    module docstring.
-    """
     periods: list[tuple[int, int]] = []
     for job in resume.work:
         start = parse_month_index(job.start_date.value) if job.start_date else None
@@ -167,11 +126,6 @@ def _employment_gaps(resume: CitedResume) -> list[RiskFlag]:
 
 
 def _unlinked_projects(resume: CitedResume) -> list[RiskFlag]:
-    """Fires when several projects cannot be independently checked.
-
-    A single unlinked project among linked ones is ordinary and not worth the
-    reader's attention, so the flag needs at least two.
-    """
     unlinked = [p for p in resume.projects if not p.has_link]
     if len(unlinked) < 2:
         return []
@@ -191,7 +145,6 @@ def _unlinked_projects(resume: CitedResume) -> list[RiskFlag]:
 
 
 def _vague_claims(resume: CitedResume) -> list[RiskFlag]:
-    """Bullets with no measurable outcome and hedging language."""
     highlights = [h for job in resume.work for h in job.highlights]
     highlights += [h for project in resume.projects for h in project.highlights]
 
@@ -223,7 +176,6 @@ def _vague_claims(resume: CitedResume) -> list[RiskFlag]:
 
 
 def _grounding_risk(resume: CitedResume) -> list[RiskFlag]:
-    """Fires when extraction itself was unreliable for this document."""
     flags: list[RiskFlag] = []
     grounding = resume.grounding
 

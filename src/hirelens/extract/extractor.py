@@ -1,24 +1,3 @@
-"""Turn a source document into a :class:`CitedResume`.
-
-The pipeline for one resume:
-
-1. **Segment** into sections using detected headings.
-2. **Redact** identifying spans, length-preservingly, when blind mode is on.
-3. **Extract** each section concurrently, one focused LLM call per section,
-   returning raw values plus verbatim quotes.
-4. **Locate** every quote in the source ourselves and turn it into a span.
-5. **Verify** each resolved citation actually contains the quoted text.
-6. **Report** grounding statistics so degradation is visible rather than silent.
-
-Steps 4 and 5 are the ones that make this different from a normal resume parser.
-The model is never asked where something is, only what it says, and the claim is
-checked against the document before it is allowed into the output.
-
-Section failures are isolated. If the model returns garbage for the projects
-section, that section is recorded in ``failed_sections`` and the other five still
-produce a usable resume. One bad section should not cost a whole candidate.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -68,14 +47,10 @@ _SECTION_SCHEMAS: dict[SectionKind, type[BaseModel]] = {
     SectionKind.AWARDS: RawAwardsSection,
 }
 
-# Below this, a section is almost certainly a stray heading with no body, and
-# calling the model on it wastes a request from a limited free-tier quota.
 _MIN_SECTION_CHARS = 15
 
 
 class ExtractionResult(BaseModel):
-    """Everything one parse produced, including the diagnostics."""
-
     resume: CitedResume
     redaction: RedactionReport
     sections_found: list[str]
@@ -83,8 +58,6 @@ class ExtractionResult(BaseModel):
 
 
 class ResumeExtractor:
-    """Extracts a cited resume from a document."""
-
     def __init__(
         self,
         client: LLMClient | None = None,
@@ -101,7 +74,6 @@ class ResumeExtractor:
         blind: bool | None = None,
         categories: frozenset[PIICategory] | None = None,
     ) -> ExtractionResult:
-        """Parse ``document`` into a :class:`CitedResume`."""
         blind = self.settings.blind_mode if blind is None else blind
 
         section_map = segment(document)
@@ -112,9 +84,6 @@ class ResumeExtractor:
         )
 
         report = redact(document.text, categories=categories)
-        # The model reads the masked view; the locator searches the same view, so
-        # spans resolved here are valid against the original text too. That only
-        # holds because masking preserves length.
         model_text = report.redacted_text if blind else document.text
         locator = SpanLocator(model_text)
 
@@ -135,15 +104,12 @@ class ResumeExtractor:
             llm_usage=self.client.usage_summary(),
         )
 
-    # -- LLM calls -----------------------------------------------------------
-
     async def _extract_all_sections(
         self,
         document: SourceDocument,
         section_map: SectionMap,
         model_text: str,
     ) -> dict[SectionKind, BaseModel | None]:
-        """One concurrent call per section. Failures isolated per section."""
         kinds = [k for k in supported_kinds() if self._section_text(k, section_map, model_text)]
         results = await asyncio.gather(
             *(self._extract_section(kind, section_map, model_text) for kind in kinds),
@@ -179,16 +145,12 @@ class ResumeExtractor:
             raise
 
     def _section_text(self, kind: SectionKind, section_map: SectionMap, model_text: str) -> str:
-        """The slice of text for one section, with sensible fallbacks."""
         span = section_map.span_for(kind)
 
         if span is None and kind is SectionKind.BASICS:
-            # No explicit contact block: use the header, where it always lives.
             span = Span(start=0, end=min(500, len(model_text)))
 
         if span is None:
-            # Unstructured resume: fall back to the whole document rather than
-            # skipping the section entirely.
             other = section_map.span_for(SectionKind.OTHER)
             if other is None:
                 return ""
@@ -196,8 +158,6 @@ class ResumeExtractor:
 
         text = model_text[span.start : span.end].strip()
         return text if len(text) >= _MIN_SECTION_CHARS else ""
-
-    # -- assembly ------------------------------------------------------------
 
     def _assemble(
         self,
@@ -330,8 +290,6 @@ class ResumeExtractor:
 
 
 class _GroundingTracker:
-    """Converts raw quoted values into cited ones, counting as it goes."""
-
     def __init__(self, *, locator: SpanLocator, source_text: str, document: SourceDocument) -> None:
         self.locator = locator
         self.source_text = source_text
@@ -349,17 +307,9 @@ class _GroundingTracker:
         return self.cite_value(field.value, field.quote, scope)
 
     def cite_value(self, value: str, quote: str, scope: Span | None) -> Cited[str]:
-        """Resolve one value's quote into a verified citation.
-
-        Falls back to searching for the value itself when the model gave no quote.
-        A model that returns ``value="Acme Corp"`` with an empty quote has still
-        told us something locatable, and recovering it costs one string search.
-        """
         self.total_fields += 1
         value = value.strip()
 
-        # Try the model's quote first, then the value, then a widened search
-        # without the section restriction.
         for candidate, within in ((quote, scope), (value, scope), (quote, None), (value, None)):
             if not candidate or not candidate.strip():
                 continue
@@ -371,8 +321,6 @@ class _GroundingTracker:
                 document_id=self.document_id,
                 span=located.span,
                 quote=self.source_text[located.span.start : located.span.end],
-                # Resolve the page now so the frontend can jump straight to it
-                # without needing the document's block map at render time.
                 page=self.document.page_of(located.span),
             )
             self.total_citations += 1

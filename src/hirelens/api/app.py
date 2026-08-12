@@ -1,14 +1,3 @@
-"""FastAPI application factory.
-
-A factory rather than a module-level ``app`` object, because tests need an
-application wired to an in-memory database and a fake LLM provider. With a global
-app that requires monkeypatching; with a factory it is an argument.
-
-Shared state (engine, session factory, background runner) lives on ``app.state``
-and is created in the lifespan handler, so it is built once at startup and torn
-down deterministically at shutdown rather than leaking connections between tests.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -63,11 +52,6 @@ def create_app(
     runner: ScreeningRunner | None = None,
     create_tables: bool = True,
 ) -> FastAPI:
-    """Build the application.
-
-    Every dependency is injectable, which is what makes the route tests fast and
-    hermetic: an in-memory database, a runner backed by a fake provider, no network.
-    """
     resolved_settings = settings or get_settings()
     url = database_url or os.getenv("HIRELENS_DATABASE_URL", DEFAULT_DATABASE_URL)
 
@@ -90,8 +74,6 @@ def create_app(
         try:
             yield
         finally:
-            # Cancel in-flight runs before disposing the engine, or their final
-            # writes hit a closed pool and log alarming errors on every shutdown.
             await application.state.runner.shutdown()
             await engine.dispose()
 
@@ -106,8 +88,6 @@ def create_app(
 
     app.add_middleware(
         CORSMiddleware,
-        # The frontend is served from a different origin in development. Locked
-        # down by configuration in a real deployment.
         allow_origins=["*"],
         allow_credentials=False,
         allow_methods=["*"],
@@ -121,46 +101,24 @@ def create_app(
 
     @app.exception_handler(ValueError)
     async def _value_error(_request: Request, exc: ValueError) -> JSONResponse:
-        """Domain validation errors are client errors, not server errors.
-
-        The pipeline raises ValueError for things like a job description too short
-        to compile. Without this they would surface as 500s and look like bugs.
-        """
         return JSONResponse(status_code=400, content={"detail": str(exc), "code": "invalid_input"})
 
-    # Mounted last. A mount at "/" matches every path the routers above did not
-    # claim, so registering it earlier would shadow the entire API.
     _mount_frontend(app)
 
     return app
 
 
 def find_static_dir() -> Path | None:
-    """Locate the built frontend, if there is one.
-
-    Returns ``None`` when the dashboard has not been built, which is the normal
-    state in development (Vite serves it on port 5173 and proxies the API) and
-    during tests. The API is fully usable without it, so a missing build is not
-    an error.
-    """
     override = os.getenv("HIRELENS_STATIC_DIR")
     if override:
         path = Path(override)
         return path if (path / "index.html").is_file() else None
 
-    # From src/hirelens/api/app.py up to the repository root, then into web/dist.
     candidate = Path(__file__).resolve().parents[3] / "web" / "dist"
     return candidate if (candidate / "index.html").is_file() else None
 
 
 def _mount_frontend(app: FastAPI) -> None:
-    """Serve the dashboard from the API when a build is present.
-
-    One origin for both means no CORS in production and one process to deploy,
-    which matters when the target is a free hosting tier that gives you exactly
-    one container. ``html=True`` makes StaticFiles fall back to ``index.html``,
-    so a refresh on any path loads the app rather than returning 404.
-    """
     static_dir = find_static_dir()
     if static_dir is None:
         logger.info("no frontend build found; serving the API only")
@@ -175,11 +133,6 @@ def _health_router(settings: Settings) -> APIRouter:
 
     @router.get("/health", response_model=HealthOut)
     async def health(request: Request) -> HealthOut:
-        """Liveness plus configuration.
-
-        Reports whether a provider credential is present without ever returning
-        it, so a deployment can be diagnosed from the outside.
-        """
         database_ok = await ping(request.app.state.engine)
         return HealthOut(
             status="ok" if database_ok else "degraded",
@@ -194,5 +147,4 @@ def _health_router(settings: Settings) -> APIRouter:
     return router
 
 
-# Module-level app for `uvicorn hirelens.api.app:app`.
 app = create_app()

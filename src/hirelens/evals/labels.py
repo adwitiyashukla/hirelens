@@ -1,23 +1,3 @@
-"""Human ground truth: the part of the harness a model cannot produce.
-
-Labels are stored separately from the golden set so that regenerating or editing
-a profile does not silently invalidate the judgement someone made about it. Each
-label records who made it, when, and why, because a rating with no rationale
-cannot be reviewed, disputed, or learned from six months later.
-
-**The scale is a five-point tier, not a 0-100 score.** Humans are no better at
-producing calibrated numbers than models are: asked for a score out of a hundred
-you get clustering on multiples of five and drift across a long labelling session.
-Asked to choose between "would interview" and "probably not", with each level
-defined, people are consistent. Spearman and Kendall both work on tiers, and the
-tie-handling in :mod:`hirelens.evals.metrics` exists precisely because tiers
-produce ties.
-
-**The label is a decision, not a rating.** "Would you interview this person for
-this role" is a question a screener answers every day, so the answers are grounded
-in something real. "How good is this candidate out of ten" is not.
-"""
-
 from __future__ import annotations
 
 import json
@@ -30,8 +10,6 @@ from hirelens._compat import StrEnum
 
 
 class Tier(StrEnum):
-    """Five-point screening decision, worst to best."""
-
     STRONG_NO = "strong_no"
     NO = "no"
     MAYBE = "maybe"
@@ -39,9 +17,6 @@ class Tier(StrEnum):
     STRONG_YES = "strong_yes"
 
 
-#: Ordinal values. Evenly spaced because the tiers are ranks, not measurements,
-#: and pretending to know that the gap between "yes" and "strong yes" is twice
-#: the gap between "no" and "maybe" would be inventing precision.
 TIER_VALUES: dict[Tier, float] = {
     Tier.STRONG_NO: 0.0,
     Tier.NO: 1.0,
@@ -58,8 +33,6 @@ TIER_ORDER: tuple[Tier, ...] = (
     Tier.STRONG_YES,
 )
 
-#: Shown during labelling. The definitions are the calibration: without them,
-#: two people, or the same person on two days, mean different things by "maybe".
 TIER_DEFINITIONS: dict[Tier, str] = {
     Tier.STRONG_YES: "Clear interview. Meets the bar with evidence to spare.",
     Tier.YES: "Would interview. Meets the requirements.",
@@ -70,8 +43,6 @@ TIER_DEFINITIONS: dict[Tier, str] = {
 
 
 class Label(BaseModel):
-    """One human judgement of one candidate against one job."""
-
     model_config = ConfigDict(frozen=True)
 
     job_id: str
@@ -113,8 +84,6 @@ class Label(BaseModel):
 
 
 class LabelSet(BaseModel):
-    """Every human label, keyed by (job, candidate)."""
-
     labels: list[Label] = Field(default_factory=list)
 
     def get(self, job_id: str, candidate_id: str) -> Label | None:
@@ -124,13 +93,11 @@ class LabelSet(BaseModel):
         return [label for label in self.labels if label.job_id == job_id]
 
     def upsert(self, label: Label) -> None:
-        """Replace any existing label for the same pair."""
         self.labels = [existing for existing in self.labels if existing.key != label.key]
         self.labels.append(label)
         self.labels.sort(key=lambda item: item.key)
 
     def missing(self, job_ids: list[str], candidate_ids: list[str]) -> list[tuple[str, str]]:
-        """Pairs still needing a human decision."""
         have = {label.key for label in self.labels}
         return [
             (job_id, candidate_id)
@@ -147,12 +114,6 @@ class LabelSet(BaseModel):
         return counts
 
     def tier_distribution(self, job_id: str | None = None) -> dict[str, int]:
-        """How many labels landed in each tier.
-
-        Worth checking before trusting any correlation: a set where everything is
-        "yes" carries no ranking information, and a coefficient computed over it
-        is meaningless however large it looks.
-        """
         selected = self.for_job(job_id) if job_id else self.labels
         counts = {str(tier): 0 for tier in TIER_ORDER}
         for label in selected:
@@ -171,8 +132,6 @@ class LabelSet(BaseModel):
 
 
 class LabelQualityWarning(BaseModel):
-    """A reason to distrust the metrics computed from these labels."""
-
     model_config = ConfigDict(frozen=True)
 
     code: str
@@ -180,12 +139,6 @@ class LabelQualityWarning(BaseModel):
 
 
 def check_label_quality(labels: LabelSet, job_ids: list[str]) -> list[LabelQualityWarning]:
-    """Sanity checks on the ground truth before it is used to judge anything.
-
-    Reported at the top of the eval output rather than buried. A metric computed
-    from degenerate labels is worse than no metric, because it looks like
-    evidence.
-    """
     warnings: list[LabelQualityWarning] = []
 
     for job_id in job_ids:

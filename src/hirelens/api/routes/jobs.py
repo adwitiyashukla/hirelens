@@ -1,5 +1,3 @@
-"""Job posting routes."""
-
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
@@ -13,7 +11,6 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 def to_out(job) -> JobOut:
-    """Serialise a posting, flattening the stored rubric into requirements."""
     requirements = []
     if job.rubric_json:
         requirements = [
@@ -31,16 +28,6 @@ def to_out(job) -> JobOut:
 
 @router.post("", response_model=JobOut, status_code=status.HTTP_201_CREATED)
 async def create_job(payload: JobCreate, session: AsyncSession = SessionDep) -> JobOut:
-    """Create a job posting.
-
-    Idempotent on the description text: posting the same description twice returns
-    the existing record together with its already-compiled rubric. That matters
-    beyond saving a call, because recompiling would produce a slightly different
-    rubric and silently make two runs incomparable.
-
-    The rubric itself is compiled lazily, on the first screening run, so creating a
-    job never blocks on a model call.
-    """
     job = await JobRepository(session).upsert(payload.description, title=payload.title)
     return to_out(job)
 

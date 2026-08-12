@@ -1,26 +1,3 @@
-"""Background screening execution with live progress.
-
-Screening a batch takes tens of seconds per candidate, so it cannot happen on the
-request path. The API accepts the run, returns immediately with an id, and the work
-proceeds in the background while the client subscribes to progress over
-server-sent events.
-
-**Why an in-process runner rather than Celery or arq.** Those need a broker, a
-worker process, and a deployment story, and this workload does not justify any of
-it: one screening is a handful of network calls with almost no CPU, the concurrency
-limit that matters is the LLM provider's rate limit (already enforced by the
-client's semaphore), and a free-tier demo cannot afford to run Redis. The trade-off
-is real and stated rather than hidden: **a restart loses in-flight runs.** The run
-row is left in ``running`` and is recoverable by re-submitting. The
-:class:`ScreeningRunner` interface is deliberately narrow so swapping in a real
-queue later touches one class.
-
-**Progress is published, not polled.** Each run gets an asyncio broadcast channel;
-subscribers receive every stage change. A late subscriber immediately receives the
-current state, so a client that connects after the run finished still gets a
-terminal event and closes cleanly rather than hanging forever.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -52,19 +29,10 @@ from hirelens.schemas.job import Rubric
 
 logger = logging.getLogger(__name__)
 
-#: How long a finished run's progress channel is kept so late subscribers still
-#: get a terminal event instead of an empty stream.
 _CHANNEL_TTL_S = 300
 
 
 class ProgressChannel:
-    """Fan-out of progress events for one run.
-
-    Keeps the latest event so a subscriber joining mid-run, or after the end,
-    immediately learns where things stand rather than waiting for the next change
-    that may never come.
-    """
-
     def __init__(self, run_id: str) -> None:
         self.run_id = run_id
         self._subscribers: set[asyncio.Queue[RunProgress]] = set()
@@ -82,9 +50,6 @@ class ProgressChannel:
     def publish(self, event: RunProgress) -> None:
         self._latest = event
         for queue in list(self._subscribers):
-            # Never block the pipeline on a slow reader. A full queue means the
-            # client cannot keep up, and dropping an intermediate event is
-            # harmless because the next one carries the complete state anyway.
             with contextlib.suppress(asyncio.QueueFull):
                 queue.put_nowait(event)
         if event.is_terminal:
@@ -108,8 +73,6 @@ class ProgressChannel:
 
 
 class ScreeningRunner:
-    """Executes screening runs off the request path."""
-
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -119,14 +82,11 @@ class ScreeningRunner:
     ) -> None:
         self.session_factory = session_factory
         self.settings = settings or get_settings()
-        # Injectable so tests can supply a pipeline backed by a fake provider.
         self._pipeline_factory = pipeline_factory or (
             lambda: ScreeningPipeline(settings=self.settings)
         )
         self._channels: dict[str, ProgressChannel] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
-
-    # -- channels ------------------------------------------------------------
 
     def channel(self, run_id: str) -> ProgressChannel:
         channel = self._channels.get(run_id)
@@ -148,10 +108,7 @@ class ScreeningRunner:
             )
         )
 
-    # -- submission ----------------------------------------------------------
-
     def submit(self, run_id: str, document_ids: list[str], **options) -> None:
-        """Queue a run. Returns immediately."""
         if run_id in self._tasks and not self._tasks[run_id].done():
             logger.warning("run %s is already executing", run_id)
             return
@@ -161,25 +118,16 @@ class ScreeningRunner:
         task.add_done_callback(lambda _: self._tasks.pop(run_id, None))
 
     async def wait(self, run_id: str, *, timeout: float = 120.0) -> None:
-        """Block until a run finishes. For tests and for CLI-style callers."""
         task = self._tasks.get(run_id)
         if task is not None:
             await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
 
     async def shutdown(self) -> None:
-        """Cancel in-flight runs on server shutdown.
-
-        Their rows stay in ``running``, which is the honest record of what
-        happened. Marking them failed would be wrong: they were interrupted, not
-        rejected, and resubmitting is cheap because extraction is cached.
-        """
         for task in list(self._tasks.values()):
             task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
-
-    # -- execution -----------------------------------------------------------
 
     async def _execute(
         self,
@@ -239,12 +187,6 @@ class ScreeningRunner:
     async def _resolve_rubric(
         self, job_id: str, pipeline: ScreeningPipeline, run_id: str
     ) -> Rubric:
-        """Reuse the stored rubric, or compile and store it once.
-
-        Reuse is a correctness requirement, not a saving. Two candidates screened
-        against "the same job" must face literally the same requirements, and
-        recompiling would let the wording drift between them.
-        """
         async with session_scope(self.session_factory) as session:
             job = await JobRepository(session).get(job_id)
             if job is None:
@@ -275,7 +217,6 @@ class ScreeningRunner:
         top_k: int,
         with_questions: bool,
     ) -> None:
-        """Screen one candidate. A failure costs that candidate, not the batch."""
         async with session_scope(self.session_factory) as session:
             run = await RunRepository(session).get(run_id)
             document = await DocumentRepository(session).get(document_id)
@@ -319,12 +260,6 @@ class ScreeningRunner:
 
 
 def _to_source_document(row) -> SourceDocument:
-    """Rebuild the in-memory document from its stored row.
-
-    The offset map is restored too. Without it, citations resolved during this run
-    would have no bounding boxes and the frontend could not draw a highlight over
-    the original PDF.
-    """
     payload = (row.blocks_json or {}).get("blocks", [])
     blocks: list[TextBlock] = []
 

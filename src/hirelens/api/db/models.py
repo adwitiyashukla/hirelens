@@ -1,27 +1,3 @@
-"""Database schema.
-
-Four tables, and the shape of them follows from decisions made much earlier in the
-pipeline rather than from ORM convention.
-
-**Documents are content-addressed.** The primary key is the SHA-256 of the file
-bytes, which the ingestion layer already computes. Uploading the same resume twice
-is therefore idempotent for free: the second upload resolves to the existing row,
-reuses its cached extraction, and costs nothing. Recruiters really do upload the
-same CV twice.
-
-**The full text is stored, not just the path.** Every citation in the system is a
-character offset into that exact string, so if the text is not stored the
-highlights cannot be rendered later. Storing the original bytes as well means the
-frontend can display the real PDF with boxes drawn over it.
-
-**Assessments store their JSON payload whole.** The relational columns are the ones
-worth querying (score, rubric, whether must-haves were met); the nested structure
-of per-requirement verdicts, samples and citations is stored as JSON. Normalising
-that into four more tables would buy nothing, because nothing queries across
-requirements, and it would couple the database schema to a Pydantic model that is
-still moving.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -49,10 +25,6 @@ def utcnow() -> datetime:
 
 
 class Base(DeclarativeBase):
-    """Declarative base with a JSON type that works on SQLite and Postgres alike."""
-
-    # Maps the `dict[str, Any]` annotation to a JSON column that works on both
-    # SQLite and Postgres without a backend-specific type.
     type_annotation_map: ClassVar[dict] = {dict[str, Any]: JSON}
 
 
@@ -64,14 +36,6 @@ class RunStatus(StrEnum):
 
 
 class JobPosting(Base):
-    """A job description and the rubric compiled from it.
-
-    The rubric is cached on the row rather than recompiled per run. Two candidates
-    screened against "the same job" must be scored against literally the same
-    requirements or their scores are not comparable, and recompiling would let the
-    wording drift between them.
-    """
-
     __tablename__ = "job_postings"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -91,24 +55,18 @@ class JobPosting(Base):
 
 
 class Document(Base):
-    """An uploaded resume, keyed by the hash of its bytes."""
-
     __tablename__ = "documents"
 
-    # Content-addressed, so re-uploading the same file is a no-op.
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     filename: Mapped[str] = mapped_column(String(255))
     content_type: Mapped[str] = mapped_column(String(64), default="application/pdf")
     source_format: Mapped[str] = mapped_column(String(16), default="pdf")
 
-    # The canonical text every span indexes into. Without it, citations resolved
-    # at screening time could never be rendered again.
     text: Mapped[str] = mapped_column(Text)
     raw_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
 
     page_count: Mapped[int] = mapped_column(Integer, default=1)
     char_count: Mapped[int] = mapped_column(Integer, default=0)
-    # Offset map: page and bounding box per line, for PDF highlight overlays.
     blocks_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -118,8 +76,6 @@ class Document(Base):
 
 
 class ScreeningRun(Base):
-    """One batch of candidates screened against one job."""
-
     __tablename__ = "screening_runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -153,15 +109,12 @@ class ScreeningRun(Base):
 
 
 class Assessment(Base):
-    """One candidate's result within one run."""
-
     __tablename__ = "assessments"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("screening_runs.id", ondelete="CASCADE"))
     document_id: Mapped[str] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
 
-    # Queryable columns: everything a shortlist view sorts or filters on.
     candidate_label: Mapped[str] = mapped_column(String(255), default="")
     score: Mapped[float] = mapped_column(Float, default=0.0)
     score_low: Mapped[float] = mapped_column(Float, default=0.0)
@@ -173,8 +126,6 @@ class Assessment(Base):
     citation_validity_rate: Mapped[float] = mapped_column(Float, default=1.0)
     elapsed_s: Mapped[float] = mapped_column(Float, default=0.0)
 
-    # The nested detail. Nothing queries across requirements, so normalising this
-    # would add tables and joins for no benefit.
     assessment_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     resume_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
 
@@ -184,8 +135,6 @@ class Assessment(Base):
     document: Mapped[Document] = relationship(back_populates="assessments")
 
 
-# The shortlist query is the hot path: every candidate in a run, ordered by
-# must-have compliance then score. This index matches it exactly.
 Index(
     "ix_assessments_shortlist",
     Assessment.run_id,

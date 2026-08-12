@@ -1,18 +1,3 @@
-"""Render the fairness audit, and gate CI on it.
-
-The markdown output is written to be publishable. NYC Local Law 144 requires an
-annual bias audit of automated employment decision tools, and the EU AI Act
-requires documentation for high-risk systems; this is not that document, but it is
-the measurement such a document would be built on, and it is shaped accordingly:
-method stated, control reported, numbers given whether or not they flatter the
-system.
-
-The gate fires on blind-mode drift only. Blind mode is the shipping configuration,
-so that is what has to be safe. The sighted numbers are diagnostic, and a large
-sighted drift is not a build failure, it is the finding that justifies blind mode
-existing.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -30,11 +15,6 @@ _AXIS_LABELS = {
 
 def _label(axis: str) -> str:
     return _AXIS_LABELS.get(axis, axis)
-
-
-# ---------------------------------------------------------------------------
-# Console
-# ---------------------------------------------------------------------------
 
 
 def to_console(report: AuditReport) -> str:
@@ -85,9 +65,6 @@ def to_console(report: AuditReport) -> str:
             f"({sighted_worst.max_drift:.2f} -> {blind_worst.max_drift:.2f})"
         )
 
-    # Only report a directional gap when there is one. With every group equal,
-    # favoured and disfavoured are the same group and the sentence would read
-    # "'female' scores 0.00 pts above 'female'".
     if sighted_worst and sighted_worst.group_gap > 0:
         add(
             f"largest sighted gap: '{sighted_worst.favoured_group}' scores "
@@ -109,11 +86,6 @@ def to_console(report: AuditReport) -> str:
     add("")
     add(f"{report.api_calls} API calls, {report.elapsed_s:.0f}s")
     return "\n".join(out)
-
-
-# ---------------------------------------------------------------------------
-# Markdown
-# ---------------------------------------------------------------------------
 
 
 def to_markdown(report: AuditReport) -> str:
@@ -228,11 +200,6 @@ def to_markdown(report: AuditReport) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Gate
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class AuditGateResult:
     passed: bool
@@ -247,7 +214,6 @@ class AuditGateResult:
 
 
 def check_audit(report: AuditReport) -> AuditGateResult:
-    """Decide whether the measured bias is acceptable. Used by CI."""
     failures: list[str] = []
     notes: list[str] = []
 

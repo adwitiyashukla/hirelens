@@ -1,5 +1,3 @@
-"""Data contracts shared across the pipeline."""
-
 from hirelens.schemas.evidence import (
     Citation,
     Cited,
@@ -34,7 +32,7 @@ __all__ += [
     "WorkExperience",
 ]
 
-from hirelens.schemas.job import (  # noqa: E402
+from hirelens.schemas.job import (
     RawRequirement,
     RawRubric,
     Requirement,
@@ -52,7 +50,7 @@ __all__ += [
     "Rubric",
 ]
 
-from hirelens.schemas.assessment import (  # noqa: E402
+from hirelens.schemas.assessment import (
     VERDICT_VALUES,
     CandidateAssessment,
     InterviewQuestion,

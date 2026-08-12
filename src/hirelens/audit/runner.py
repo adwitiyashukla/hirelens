@@ -1,30 +1,3 @@
-"""The counterfactual fairness audit.
-
-For each candidate profile, score it once per demographic variant, changing
-nothing else, and measure what moved.
-
-Three design decisions make this worth more than the usual "we care about bias"
-paragraph.
-
-**The null control sets the floor.** Two runs of an unmodified resume give the
-system's own noise. A three-point swing when the name changes means nothing if the
-score swings three points when nothing changes. Every axis is reported as drift
-*relative to that floor*, and the gate only fires on drift that exceeds it. This
-one control is the difference between a fairness measurement and fairness theatre.
-
-**Blind and sighted are both measured.** With blind mode on, names and institutions
-are masked before the model sees them, so drift should be near zero and any drift
-that remains is a *redaction leak*: the mask failed somewhere. With blind mode off,
-the same experiment measures the underlying model bias that blind mode exists to
-suppress. Reporting both quantifies how much the mitigation is actually buying,
-which is a number almost nobody publishes about their own system.
-
-**Rank flips are reported alongside point drift.** A recruiter never sees the raw
-score; they see who is at the top of the list. "Swapping the name moved this
-candidate from 3rd to 7th" is the outcome that matters, and a small mean drift can
-still reorder a shortlist.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -48,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 
 class Observation(BaseModel):
-    """One scored (profile, variant) pair."""
-
     model_config = ConfigDict(frozen=True)
 
     candidate_id: str
@@ -64,8 +35,6 @@ class Observation(BaseModel):
 
 
 class AxisResult(BaseModel):
-    """Drift measured along one demographic axis, in one blind mode."""
-
     model_config = ConfigDict(frozen=True)
 
     axis: str
@@ -94,8 +63,6 @@ class AxisResult(BaseModel):
 
 
 class AuditReport(BaseModel):
-    """Everything one audit run produced."""
-
     model_config = ConfigDict(frozen=True)
 
     provider: str
@@ -117,8 +84,6 @@ class AuditReport(BaseModel):
     api_calls: int = 0
     warnings: list[str] = Field(default_factory=list)
 
-    # -- interpretation ------------------------------------------------------
-
     def for_axis(self, axis: str, *, blind: bool) -> AxisResult | None:
         return next((a for a in self.axes if a.axis == axis and a.blind is blind), None)
 
@@ -131,12 +96,10 @@ class AuditReport(BaseModel):
         return [a for a in self.axes if not a.blind and a.axis != str(Axis.NULL)]
 
     def excess_drift(self, result: AxisResult) -> float:
-        """Drift above the system's own noise. This is the number that matters."""
         return max(0.0, result.max_drift - self.noise_floor_max)
 
     @property
     def worst_blind_axis(self) -> AxisResult | None:
-        """The axis leaking most through the redaction, if any."""
         results = self.blind_results
         return max(results, key=lambda a: a.max_drift) if results else None
 
@@ -147,11 +110,6 @@ class AuditReport(BaseModel):
 
     @property
     def blind_mode_benefit(self) -> float:
-        """How many points of drift blind mode removes.
-
-        The headline result of the whole audit: it quantifies the mitigation
-        rather than asserting it.
-        """
         blind = self.worst_blind_axis
         sighted = self.worst_sighted_axis
         if blind is None or sighted is None:
@@ -160,12 +118,6 @@ class AuditReport(BaseModel):
 
     @property
     def passes(self) -> bool:
-        """True when no axis drifts beyond the threshold, above the noise floor.
-
-        Only blind-mode results gate, because blind mode is the shipping
-        configuration. The sighted numbers are diagnostic: they measure the
-        problem, not the product.
-        """
         return all(self.excess_drift(result) <= self.threshold for result in self.blind_results)
 
     def save(self, path: Path) -> None:
@@ -181,8 +133,6 @@ class AuditReport(BaseModel):
 
 @dataclass
 class FairnessAudit:
-    """Runs the counterfactual experiment."""
-
     golden: GoldenSet = field(default_factory=build_golden_set)
     settings: Settings = field(default_factory=get_settings)
     embedder: Embedder | None = None
@@ -200,14 +150,6 @@ class FairnessAudit:
         top_k: int = 4,
         k: int | None = None,
     ) -> AuditReport:
-        """Score every (profile, variant) combination and measure the drift.
-
-        ``k`` overrides self-consistency sampling for this run only. Lowering it is
-        the main cost lever, and the trade-off is explicit: fewer samples means a
-        noisier score, which raises the null control's noise floor and makes the
-        audit *less* able to detect small drift. It never makes the audit falsely
-        claim bias, because everything is measured against that same floor.
-        """
         started = time.perf_counter()
         warnings: list[str] = []
 
@@ -220,10 +162,6 @@ class FairnessAudit:
         profiles = self._select_profiles(profile_ids)
         plan = build_plan(axes, variants_per_axis=variants_per_axis)
 
-        # The cache must be off for the null control to mean anything: with it on,
-        # two runs of an identical resume produce an identical prompt, hit the same
-        # entry, and return the same score, so the measured noise floor would be
-        # zero by construction rather than by measurement.
         audit_settings = self.settings.model_copy(
             update={
                 "cache_enabled": False,
@@ -233,15 +171,6 @@ class FairnessAudit:
         client = self.client or LLMClient(settings=audit_settings)
         pipeline = ScreeningPipeline(client, settings=audit_settings, embedder=self.embedder)
 
-        # Force the cache off on the client we were actually handed, not just in
-        # our settings copy. An injected client carries its own cache built from
-        # the caller's settings, so settings alone would leave it on.
-        #
-        # This is not a tidiness point. With caching on, two runs of an identical
-        # resume produce an identical prompt, hit the same entry, and return the
-        # same score, so the null control would report a noise floor of zero by
-        # construction. Every drift number would then be compared against a floor
-        # that was never measured, and the whole audit becomes theatre.
         cache_was_enabled = client.cache.enabled
         client.cache.enabled = False
 
@@ -249,9 +178,6 @@ class FairnessAudit:
         observations: list[Observation] = []
 
         try:
-            # The rubric is compiled once and reused for every variant. Compiling
-            # per variant would let rubric wording drift between conditions and
-            # contaminate the comparison the experiment exists to make.
             rubric = await pipeline.compile_rubric(job.text)
 
             for blind in modes:
@@ -295,17 +221,7 @@ class FairnessAudit:
         )
         return report
 
-    # -- helpers -------------------------------------------------------------
-
     def _select_profiles(self, profile_ids: list[str] | None) -> list[CandidateProfile]:
-        """Which profiles to test.
-
-        The default picks a spread across quality tiers rather than the first N.
-        Bias is not uniform across the score range: a model may treat a borderline
-        candidate very differently from an obviously strong one, and testing only
-        strong profiles would miss exactly the cases where a swap changes a
-        decision.
-        """
         if profile_ids:
             chosen = [p for p in self.golden.profiles if p.candidate_id in profile_ids]
             if not chosen:
@@ -371,16 +287,7 @@ class FairnessAudit:
         )
 
 
-# ---------------------------------------------------------------------------
-
-
 def _assign_ranks(observations: list[Observation]) -> list[Observation]:
-    """Rank candidates within each (variant, blind) condition.
-
-    Ranking within a condition is what makes rank flips meaningful: it answers
-    "if every candidate had this demographic profile, where would each land",
-    which isolates the effect of the attribute from the effect of the candidate.
-    """
     ranked: list[Observation] = []
     conditions = {(o.variant_label, o.blind) for o in observations}
 
@@ -394,13 +301,10 @@ def _assign_ranks(observations: list[Observation]) -> list[Observation]:
 
 
 def _axis_result(observations: list[Observation], axis: str, *, blind: bool) -> AxisResult | None:
-    """Aggregate drift for one axis in one blind mode."""
     subset = [o for o in observations if o.axis == axis and o.blind is blind]
     if not subset:
         return None
 
-    # Within-profile drift: the same candidate under different demographics.
-    # Comparing across profiles would measure candidate quality, not bias.
     drifts: list[float] = []
     rank_flips = 0
     must_have_flips = 0

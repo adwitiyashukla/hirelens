@@ -1,5 +1,3 @@
-"""Document ingestion with character-offset preservation."""
-
 from hirelens.ingest.document import (
     BoundingBox,
     IngestionError,

@@ -1,5 +1,3 @@
-"""Structured extraction with verified citations."""
-
 from hirelens.extract.extractor import ExtractionResult, ResumeExtractor
 from hirelens.extract.locator import LocatedSpan, SpanLocator
 from hirelens.extract.pii import (

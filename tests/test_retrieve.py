@@ -1,12 +1,3 @@
-"""Phase 3 tests: rubric compilation, chunking, embeddings, hybrid retrieval.
-
-Retrieval tests use :class:`HashingEmbedder` so CI needs no model download and no
-torch. Where a test genuinely depends on semantic matching rather than lexical
-overlap it is marked ``slow`` and skipped unless sentence-transformers is present,
-because asserting paraphrase behaviour against a hashed bag of n-grams would be
-asserting something the fallback was never claimed to do.
-"""
-
 from __future__ import annotations
 
 import json
@@ -49,7 +40,6 @@ Go, Python, PostgreSQL, Kafka, Kubernetes, Terraform
 
 
 def cite(fragment: str) -> Cited[str]:
-    """A grounded value whose span really points at ``fragment`` in SOURCE."""
     start = SOURCE.index(fragment)
     return Cited(
         value=fragment,
@@ -94,11 +84,6 @@ def resume() -> CitedResume:
     )
 
 
-# ---------------------------------------------------------------------------
-# Rubric
-# ---------------------------------------------------------------------------
-
-
 def raw(text: str, kind: RequirementKind, hint: str = "") -> RawRequirement:
     return RawRequirement(
         text=text, kind=kind, category=RequirementCategory.TECHNICAL_SKILL, evidence_hint=hint
@@ -135,7 +120,6 @@ class TestRubric:
         assert must.is_blocking and not nice.is_blocking
 
     def test_rubric_size_does_not_change_the_total(self) -> None:
-        """Otherwise a wordy JD would score differently from a terse one."""
         small = Rubric.from_raw(
             RawRubric(requirements=[raw(f"Req {i}", RequirementKind.MUST_HAVE) for i in range(3)]),
             source_text="a",
@@ -180,7 +164,6 @@ class TestRubric:
         assert rubric.requirements[0].query == "deployed operated production on-call"
 
     def test_ids_are_stable_for_the_same_jd(self) -> None:
-        """The response cache and the eval harness both depend on this."""
         args = RawRubric(requirements=[raw("Knows Go", RequirementKind.MUST_HAVE)])
         first = Rubric.from_raw(args, source_text="identical jd")
         second = Rubric.from_raw(args, source_text="identical jd")
@@ -273,11 +256,6 @@ class TestRubricCompiler:
             await compiler.compile("Backend engineer wanted")
 
 
-# ---------------------------------------------------------------------------
-# Chunking
-# ---------------------------------------------------------------------------
-
-
 class TestChunking:
     def test_produces_units_for_every_section(self, resume: CitedResume) -> None:
         sections = {u.section for u in chunk_resume(resume)}
@@ -288,13 +266,11 @@ class TestChunking:
         assert len(work_units) >= 3
 
     def test_units_carry_context_for_retrieval(self, resume: CitedResume) -> None:
-        """A bare metric bullet retrieves badly without its role attached."""
         unit = next(u for u in chunk_resume(resume) if "p99" in u.text)
         assert "Backend Engineer" in unit.text
         assert "Fintech Co." in unit.text
 
     def test_span_covers_only_the_claim_not_the_context(self, resume: CitedResume) -> None:
-        """The highlight must be tight even though the searchable text is wider."""
         unit = next(u for u in chunk_resume(resume) if "p99" in u.text)
         assert SOURCE[unit.span.start : unit.span.end].startswith("Cut p99")
         assert "Backend Engineer" not in SOURCE[unit.span.start : unit.span.end]
@@ -304,7 +280,6 @@ class TestChunking:
             assert SOURCE[unit.span.start : unit.span.end].strip()
 
     def test_ungrounded_values_produce_no_units(self) -> None:
-        """An ungrounded value has no span, so it could never be highlighted."""
         ghost = CitedResume(
             document_id=DOC_ID,
             work=[WorkExperience(company=Cited.inferred("Ghost Corp"))],
@@ -322,12 +297,6 @@ class TestChunking:
             assert citation.page == 1
 
     def test_every_unit_citation_verifies_against_the_source(self, resume: CitedResume) -> None:
-        """Regression: `text` carries retrieval context, `quote` must not.
-
-        Citing a unit by its searchable text attaches a quote its own span does not
-        contain, so verification fails and the evidence is silently dropped from a
-        score that was correctly reasoned. Caught by a Phase 4 judge test.
-        """
         for unit in chunk_resume(resume):
             assert unit.as_citation().verify(SOURCE), unit.unit_id
 
@@ -353,14 +322,8 @@ class TestChunking:
         assert 0.0 < value <= 1.0
 
 
-# ---------------------------------------------------------------------------
-# Embeddings
-# ---------------------------------------------------------------------------
-
-
 class TestHashingEmbedder:
     def test_is_deterministic(self) -> None:
-        """Reproducible evaluation depends on this."""
         a = HashingEmbedder().embed_one("Kubernetes in production")
         b = HashingEmbedder().embed_one("Kubernetes in production")
         assert a == b
@@ -402,14 +365,8 @@ class TestCosine:
         assert cosine([1.0], [1.0, 2.0]) == 0.0
 
 
-# ---------------------------------------------------------------------------
-# BM25 and hybrid retrieval
-# ---------------------------------------------------------------------------
-
-
 class TestTokenize:
     def test_keeps_technology_punctuation(self) -> None:
-        """C++, C#, .NET and Node.js must survive as single tokens."""
         tokens = tokenize("Built in C++ and C# with .NET and Node.js")
         assert "c++" in tokens
         assert "c#" in tokens
@@ -437,7 +394,6 @@ class TestBM25:
         assert bm25.scores("underwater basket weaving") == [0.0]
 
     def test_idf_is_never_negative(self) -> None:
-        """A term in most documents must not get a negative weight on a tiny corpus."""
         bm25 = BM25(["python service", "python api", "python worker"])
         assert all(value >= 0 for value in bm25.idf.values())
 
@@ -469,21 +425,18 @@ class TestHybridRetriever:
         assert len(self.build(resume).search("Go", top_k=2)) <= 2
 
     def test_hits_record_which_retriever_found_them(self, resume: CitedResume) -> None:
-        """Provenance is what makes a bad match debuggable."""
         hits = self.build(resume).search("Kubernetes production", top_k=3)
         assert hits
         assert all(hit.found_by != "none" for hit in hits)
         assert any("lexical" in hit.found_by for hit in hits)
 
     def test_fusion_beats_a_single_ranker_on_a_split_query(self, resume: CitedResume) -> None:
-        """A query mixing an exact term and a paraphrase should surface both bullets."""
         hits = self.build(resume).search("Kafka streaming and reducing checkout latency", top_k=4)
         text = " ".join(hit.unit.text for hit in hits)
         assert "Kafka" in text
         assert "p99" in text
 
     def test_hits_convert_into_verifiable_citations(self, resume: CitedResume) -> None:
-        """The path from retrieval to a UI highlight must be unbroken."""
         hits = self.build(resume).search("Kubernetes", top_k=1)
         citation = hits[0].unit.as_citation()
         assert citation.verify(SOURCE)

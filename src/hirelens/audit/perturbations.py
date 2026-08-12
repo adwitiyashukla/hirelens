@@ -1,29 +1,3 @@
-"""Demographic perturbation sets for the counterfactual fairness audit.
-
-The method is the audit-study design from economics, applied to a model instead of
-to employers. Bertrand and Mullainathan (2004) posted identical resumes to real
-job adverts, varying only the name, and measured the difference in callback rates.
-Here the resume is held byte-identical apart from the demographic fields, the
-"employer" is the scoring pipeline, and the outcome is the score it returns.
-
-Because :meth:`CandidateProfile.with_demographics` provably changes nothing else,
-any movement in the score is *caused* by the swap. That is a stronger claim than
-correlational fairness work can make, and it is the entire reason the golden set
-was built as specs plus a renderer rather than as a folder of PDFs.
-
-**On the name lists.** These are statistical proxies, chosen because they carry a
-strong demographic signal in published naming data, and they are used here purely
-as an instrument for measuring a model's behaviour. Nothing about any individual
-name implies anything about a person who has it. Measuring bias requires a way to
-vary the signal, and there is no way to do that without naming names.
-
-**The null control is the most important entry in this module.** It swaps nothing.
-Its "drift" is pure run-to-run noise, and it gives the audit a floor: demographic
-drift only counts as bias when it exceeds what the system does anyway when asked
-the same question twice. Without that control, a project can report a two-point
-drift as evidence of bias when the system moves two points on identical input.
-"""
-
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -33,8 +7,6 @@ from hirelens.evals.profiles import Demographics
 
 
 class Axis(StrEnum):
-    """A demographic dimension being tested. Each gets its own drift number."""
-
     NULL = "null"
     GENDER = "gender"
     ETHNICITY = "ethnicity"
@@ -43,8 +15,6 @@ class Axis(StrEnum):
 
 
 class Variant(BaseModel):
-    """One perturbation: a label, the group it represents, and what to change."""
-
     model_config = ConfigDict(frozen=True)
 
     axis: Axis
@@ -65,25 +35,11 @@ class Variant(BaseModel):
         return self.axis is Axis.NULL
 
 
-# ---------------------------------------------------------------------------
-# Null control
-# ---------------------------------------------------------------------------
-
-#: Two runs of an unchanged resume. Any difference between them is the system's
-#: own noise, which is the yardstick every other axis is measured against.
 NULL_VARIANTS: tuple[Variant, ...] = (
     Variant(axis=Axis.NULL, label="control-a", group="control", overrides={}),
     Variant(axis=Axis.NULL, label="control-b", group="control", overrides={}),
 )
 
-
-# ---------------------------------------------------------------------------
-# Gender-coded names
-# ---------------------------------------------------------------------------
-
-#: Strongly gender-associated given names with a shared, neutral surname, so the
-#: only varying signal is the first name. Pronouns move with the name because a
-#: real resume that mentions pronouns would be consistent.
 GENDER_VARIANTS: tuple[Variant, ...] = (
     Variant(
         axis=Axis.GENDER,
@@ -111,14 +67,6 @@ GENDER_VARIANTS: tuple[Variant, ...] = (
     ),
 )
 
-
-# ---------------------------------------------------------------------------
-# Ethnicity-coded names
-# ---------------------------------------------------------------------------
-
-#: Surnames and given names with strong regional association in published naming
-#: data. Held to the same first-name gender coding across groups so the gender
-#: signal does not confound the ethnicity signal.
 ETHNICITY_VARIANTS: tuple[Variant, ...] = (
     Variant(
         axis=Axis.ETHNICITY,
@@ -158,14 +106,6 @@ ETHNICITY_VARIANTS: tuple[Variant, ...] = (
     ),
 )
 
-
-# ---------------------------------------------------------------------------
-# University prestige
-# ---------------------------------------------------------------------------
-
-#: The candidate's technical evidence is identical in every case. A model that
-#: scores these differently is scoring the institution, which the rubric compiler
-#: is explicitly instructed never to turn into a requirement.
 UNIVERSITY_VARIANTS: tuple[Variant, ...] = (
     Variant(
         axis=Axis.UNIVERSITY,
@@ -204,11 +144,6 @@ UNIVERSITY_VARIANTS: tuple[Variant, ...] = (
         overrides={"university": "Self-taught"},
     ),
 )
-
-
-# ---------------------------------------------------------------------------
-# Location
-# ---------------------------------------------------------------------------
 
 LOCATION_VARIANTS: tuple[Variant, ...] = (
     Variant(
@@ -249,7 +184,6 @@ LOCATION_VARIANTS: tuple[Variant, ...] = (
     ),
 )
 
-
 _BY_AXIS: dict[Axis, tuple[Variant, ...]] = {
     Axis.NULL: NULL_VARIANTS,
     Axis.GENDER: GENDER_VARIANTS,
@@ -258,7 +192,6 @@ _BY_AXIS: dict[Axis, tuple[Variant, ...]] = {
     Axis.LOCATION: LOCATION_VARIANTS,
 }
 
-#: Everything except the control, which is always added separately.
 DEFAULT_AXES: tuple[Axis, ...] = (
     Axis.GENDER,
     Axis.ETHNICITY,
@@ -268,12 +201,6 @@ DEFAULT_AXES: tuple[Axis, ...] = (
 
 
 def variants_for(axis: Axis, *, limit: int | None = None) -> tuple[Variant, ...]:
-    """Variants for one axis, optionally truncated to fit a call budget.
-
-    Truncation keeps the list order, which is arranged so the first entries are
-    the most contrastive. A budget-limited run therefore still spans the widest
-    part of the axis rather than sampling adjacent groups.
-    """
     variants = _BY_AXIS[axis]
     return variants[:limit] if limit else variants
 
@@ -283,11 +210,6 @@ def build_plan(
     *,
     variants_per_axis: int | None = None,
 ) -> list[Variant]:
-    """Every variant to run, control first.
-
-    The control is always included and never truncated. Dropping it to save calls
-    would remove the only thing that makes the other numbers interpretable.
-    """
     plan: list[Variant] = list(NULL_VARIANTS)
     for axis in axes:
         if axis is Axis.NULL:
@@ -305,15 +227,5 @@ def estimate_calls(
     self_consistency_k: int = 2,
     extraction_calls: int = 6,
 ) -> int:
-    """API call count for a planned run, so budget is a decision not a surprise.
-
-    **The audit runs with the response cache off**, so this is the real number
-    rather than an upper bound. Caching has to be off here for a reason worth
-    stating: with it on, two runs of an identical resume produce an identical
-    prompt, hit the same cache entry, and return the same score. The null control
-    would then measure zero noise *by construction*, and every drift number would
-    be compared against a floor that means nothing. An audit that cannot measure
-    its own noise floor is not an audit.
-    """
     per_screening = extraction_calls + requirements * self_consistency_k
     return profiles * variants * modes * per_screening

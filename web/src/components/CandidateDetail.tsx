@@ -1,16 +1,3 @@
-/**
- * One candidate, opened.
- *
- * Left: the score decomposed into requirements, plus risks and the interview
- * questions. Right: the resume, with the cited evidence highlighted.
- *
- * The two panes share `activeRequirementId` in both directions. Selecting a
- * requirement highlights its evidence; clicking a highlight selects the
- * requirement it belongs to. That round trip is what turns "the model says 72"
- * into "here are the four lines that produced 72, and here is what it could not
- * find".
- */
-
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api/client";
 import type { AssessmentDetail, DocumentText, RiskLevel } from "../api/types";
@@ -48,9 +35,6 @@ export function CandidateDetail({
         if (cancelled) return;
         setDetail(assessment);
 
-        // Fetched second and separately: the resume text is much larger than
-        // the assessment, and the requirement list should render immediately
-        // rather than waiting on it.
         const text = await api.documentText(assessment.document.id);
         if (!cancelled) setDocument(text);
       } catch (cause) {

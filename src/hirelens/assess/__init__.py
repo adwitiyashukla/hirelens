@@ -1,5 +1,3 @@
-"""Rubric compilation, requirement judging, risk flags, and the screening pipeline."""
-
 from hirelens.assess.judge import RequirementJudge
 from hirelens.assess.pipeline import DEFAULT_TOP_K, ScreeningPipeline, ScreeningResult, rank
 from hirelens.assess.questions import InterviewPackGenerator, collect_gaps

@@ -1,5 +1,3 @@
-"""Screening runs, live progress, and results."""
-
 from __future__ import annotations
 
 import asyncio
@@ -39,9 +37,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["runs"])
 
-#: Heartbeat interval for the event stream. Proxies and load balancers close idle
-#: connections after 30 to 60 seconds, and a screening stage can easily be quiet
-#: for longer than that, so a comment frame keeps the connection alive.
 _HEARTBEAT_S = 15.0
 
 
@@ -51,12 +46,6 @@ async def create_run(
     session: AsyncSession = SessionDep,
     runner: ScreeningRunner = RunnerDep,
 ) -> RunOut:
-    """Start screening a batch of candidates against a job.
-
-    Returns **202 Accepted** immediately. Screening takes tens of seconds per
-    candidate, so it happens in the background; subscribe to
-    ``GET /api/runs/{id}/events`` for live progress or poll ``GET /api/runs/{id}``.
-    """
     job = await JobRepository(session).get(payload.job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job {payload.job_id} not found")
@@ -72,8 +61,6 @@ async def create_run(
     run = await RunRepository(session).create(
         job_id=job.id, total=len(documents), blind_mode=payload.blind_mode
     )
-    # Commit before handing off, or the background task opens its own session and
-    # cannot see a run that is still sitting in this transaction.
     await session.commit()
 
     runner.submit(
@@ -99,23 +86,12 @@ async def stream_run_events(
     session: AsyncSession = SessionDep,
     runner: ScreeningRunner = RunnerDep,
 ) -> StreamingResponse:
-    """Stream run progress as server-sent events.
-
-    SSE rather than WebSockets: the traffic is one-directional, it survives proxies
-    that mangle WebSocket upgrades, and browsers reconnect automatically. There is
-    nothing here a bidirectional channel would buy.
-
-    A client that subscribes after the run finished still receives one terminal
-    event and a clean close, because the channel retains its last state.
-    """
     run = await RunRepository(session).get(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
     channel = runner.channel(run_id)
 
-    # A run that finished before anyone subscribed leaves an empty channel. Seed
-    # it from the database so the stream reports the truth instead of hanging.
     if channel.latest is None:
         from hirelens.api.schemas import RunProgress
 
@@ -145,8 +121,6 @@ async def stream_run_events(
                 try:
                     frame = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_S)
                 except TimeoutError:
-                    # A comment frame. Ignored by EventSource, but it keeps
-                    # intermediaries from closing a quiet connection.
                     yield ": keep-alive\n\n"
                     continue
 
@@ -162,7 +136,6 @@ async def stream_run_events(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            # Nginx buffers responses by default, which defeats streaming entirely.
             "X-Accel-Buffering": "no",
         },
     )
@@ -170,12 +143,6 @@ async def stream_run_events(
 
 @router.get("/runs/{run_id}/shortlist", response_model=ShortlistOut)
 async def get_shortlist(run_id: str, session: AsyncSession = SessionDep) -> ShortlistOut:
-    """The ranked candidate list.
-
-    Ordered by must-have compliance first, then score, matching
-    :func:`hirelens.assess.pipeline.rank`. A 75 that misses a hard requirement is
-    not ahead of a 62 that meets them all.
-    """
     run = await RunRepository(session).get(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
@@ -191,12 +158,6 @@ async def get_shortlist(run_id: str, session: AsyncSession = SessionDep) -> Shor
 async def get_assessment(
     assessment_id: str, session: AsyncSession = SessionDep
 ) -> AssessmentDetail:
-    """One candidate in full, with citations resolved against the stored document.
-
-    Citations are re-verified here rather than trusted from the saved payload, and
-    each one carries the highlight rectangles for the original PDF. That means the
-    grounding claim is checkable at read time, not only at the moment of scoring.
-    """
     row = await AssessmentRepository(session).get(assessment_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Assessment {assessment_id} not found")
@@ -295,8 +256,6 @@ def _citation_out(payload: dict, document_text: str, blocks: list[TextBlock]) ->
         start=span.start,
         end=span.end,
         page=citation.page,
-        # Read the quote back from the document rather than echoing the stored
-        # one, so what the UI highlights is what the document actually says.
         quote=document_text[span.start : span.end] if span.end <= len(document_text) else "",
         verified=citation.verify(document_text),
         boxes=boxes,

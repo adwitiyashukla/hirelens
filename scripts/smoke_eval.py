@@ -1,16 +1,3 @@
-"""Exercise the evaluation harness end to end without an API key.
-
-Substitutes a deterministic stand-in for the LLM: it parses the known golden-set
-resume format for extraction, and judges requirements by term overlap between the
-requirement text and the retrieved evidence.
-
-This is NOT a measurement of HireLens. A keyword judge cannot do what a language
-model does, and the numbers it produces say nothing about real quality. It exists
-to prove that data flows correctly through every stage, that the metrics compute
-on realistic shapes, and that the regression gate fires when it should. Run
-`make eval` with a real provider and real human labels for an actual result.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -243,8 +230,6 @@ def _judge(convo: str) -> dict:
 
 
 class HeuristicProvider(LLMProvider):
-    """Deterministic stand-in for a real model. See the module docstring."""
-
     name = "heuristic"
     model = "heuristic-stub"
 
@@ -284,11 +269,6 @@ class HeuristicProvider(LLMProvider):
 
 
 def placeholder_labels() -> LabelSet:
-    """Labels derived from each profile's design intent.
-
-    A stand-in so the harness has something to correlate against. Real labels come
-    from `hirelens-evals label` and a human making screening decisions.
-    """
     tiers = {"strong": Tier.STRONG_YES, "solid": Tier.YES, "mixed": Tier.MAYBE, "weak": Tier.NO}
     labels = LabelSet()
     for job in GOLDEN.jobs:

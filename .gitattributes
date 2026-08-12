@@ -1,14 +1,5 @@
-# Normalise line endings so the repository is byte-identical whoever clones it.
-#
-# Without this, git on Windows rewrites LF to CRLF on checkout and the whole
-# tree shows as modified on a Linux machine, which makes every diff useless. It
-# also matters here specifically: the pipeline stores character offsets into
-# document text, and CRLF adds a byte per line. A citation located on one
-# platform would point one character off per preceding line on the other.
-
 * text=auto eol=lf
 
-# Binary. Never touch these.
 *.pdf binary
 *.png binary
 *.jpg binary
@@ -20,12 +11,8 @@
 *.db binary
 *.sqlite binary
 
-# Generated, and noisy in review. Still committed, because a lockfile is how a
-# build stays reproducible, but collapsed in diffs by default.
 web/package-lock.json linguist-generated=true -diff
 
-# Keep GitHub's language stats honest: report this as a Python project with a
-# TypeScript frontend, not as whatever the largest generated file happens to be.
 samples/** linguist-documentation=true
 evals/data/** linguist-documentation=true
 docs/** linguist-documentation=true

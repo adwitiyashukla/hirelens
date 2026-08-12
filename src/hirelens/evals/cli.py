@@ -1,18 +1,3 @@
-"""Evaluation commands: generate the golden set, label it, run the harness.
-
-The labelling command is the one that matters. Human ground truth is the only
-part of this project a model cannot produce, and the quality of every metric is
-capped by the care taken here. So the command is built to make careful labelling
-easy: it shows the job requirements alongside each resume, states the tier
-definitions every time rather than assuming they are remembered, saves after every
-decision so a long session cannot be lost, and asks for a one-line rationale so
-the judgement can be reviewed later.
-
-It deliberately does **not** show the system's score while labelling. Seeing the
-machine's answer before giving yours is anchoring, and it would quietly inflate
-every agreement number in the report.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -44,7 +29,6 @@ def generate(
         "evals/data/resumes"
     ),
 ) -> None:
-    """Render the golden set to text files so you can read what you are labelling."""
     golden = build_golden_set()
 
     for profile in golden.profiles:
@@ -76,11 +60,6 @@ def label(
     labeller: Annotated[str, typer.Option("--as", help="Your name, recorded on each label")] = "",
     redo: Annotated[bool, typer.Option("--redo", help="Re-label pairs already done")] = False,
 ) -> None:
-    """Assign a screening tier to each (job, candidate) pair.
-
-    The question is always the same: would you interview this person for this
-    role? Answer as a screener, not as a critic.
-    """
     golden = build_golden_set()
     labels = LabelSet.load(labels_path)
 
@@ -199,7 +178,6 @@ def run(
     ] = False,
     top_k: Annotated[int, typer.Option("--top-k")] = 4,
 ) -> None:
-    """Run the harness over the golden set and report agreement with human labels."""
     labels = LabelSet.load(labels_path)
     if not labels.labels:
         console.print(
@@ -247,7 +225,6 @@ def gate_only(
     report_path: Annotated[Path, typer.Option("--report")] = DEFAULT_REPORT,
     baseline_path: Annotated[Path, typer.Option("--baseline")] = DEFAULT_BASELINE,
 ) -> None:
-    """Check a stored report against the baseline without re-running the harness."""
     if not report_path.exists():
         console.print(f"[red]No report at {report_path}.[/red]")
         raise typer.Exit(code=1)

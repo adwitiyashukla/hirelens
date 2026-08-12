@@ -1,11 +1,3 @@
-"""Tests for the citation machinery.
-
-These are the most important tests in the repo. If citation verification stops
-working, the system silently reverts to being an ordinary ungrounded resume
-scorer while still claiming to be grounded, which is worse than not having the
-feature at all.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -18,12 +10,6 @@ DOC_ID = "doc-1"
 
 
 def span_of(fragment: str) -> Span:
-    """Span covering ``fragment`` in :data:`DOC`.
-
-    Derived rather than hardcoded on purpose. Hand-counted offsets are wrong often
-    enough that they turn a failing test into a debugging session about the test
-    instead of about the code.
-    """
     start = DOC.index(fragment)
     return Span(start=start, end=start + len(fragment))
 
@@ -49,10 +35,10 @@ class TestSpan:
     @pytest.mark.parametrize(
         ("a", "b", "expected"),
         [
-            ((0, 10), (5, 15), True),  # partial overlap
-            ((0, 10), (10, 20), False),  # touching, half-open so not overlapping
-            ((0, 20), (5, 10), True),  # containment
-            ((0, 5), (10, 15), False),  # disjoint
+            ((0, 10), (5, 15), True),
+            ((0, 10), (10, 20), False),
+            ((0, 20), (5, 10), True),
+            ((0, 5), (10, 15), False),
         ],
     )
     def test_overlaps(self, a: tuple[int, int], b: tuple[int, int], expected: bool) -> None:
@@ -77,7 +63,6 @@ class TestCitation:
         assert cite.verify(DOC) is True
 
     def test_fabricated_quote_is_rejected(self) -> None:
-        """The core hallucination check: invented content must not verify."""
         cite = Citation(
             document_id=DOC_ID,
             span=span_of("distributed task queue"),

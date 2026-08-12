@@ -1,11 +1,3 @@
-"""Data access, kept out of the route handlers.
-
-Routes translate HTTP to intent; repositories translate intent to SQL. Keeping
-them apart is what lets the background runner reuse the same persistence logic
-without importing anything from FastAPI, and it means the screening pipeline can
-be tested without a web server anywhere in the picture.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -25,13 +17,6 @@ def new_id() -> str:
 
 
 def job_id_for(description: str) -> str:
-    """Content-addressed job id.
-
-    Posting the same description twice reuses the row, which means the compiled
-    rubric is reused too. That is the same idempotence property documents have,
-    and it matters more here: recompiling would produce a subtly different rubric
-    and silently make two runs incomparable.
-    """
     return hashlib.sha256(description.strip().encode("utf-8")).hexdigest()[:32]
 
 
@@ -43,7 +28,6 @@ class JobRepository:
         return await self.session.get(JobPosting, job_id)
 
     async def upsert(self, description: str, *, title: str = "") -> JobPosting:
-        """Create the posting, or return the existing one for identical text."""
         job_id = job_id_for(description)
         existing = await self.get(job_id)
         if existing is not None:
@@ -85,12 +69,6 @@ class DocumentRepository:
         raw_bytes: bytes | None = None,
         content_type: str = "application/pdf",
     ) -> tuple[Document, bool]:
-        """Store an ingested document. Returns (row, created).
-
-        Idempotent because the id is the hash of the file bytes: re-uploading the
-        same resume returns the existing row and its cached extraction rather than
-        paying for it again.
-        """
         existing = await self.get(source.document_id)
         if existing is not None:
             return existing, False
@@ -104,7 +82,6 @@ class DocumentRepository:
             raw_bytes=raw_bytes,
             page_count=source.page_count,
             char_count=source.char_count,
-            # The offset map, so highlights can be drawn long after the run.
             blocks_json={"blocks": [block.model_dump(mode="json") for block in source.blocks]},
         )
         self.session.add(document)
@@ -122,7 +99,6 @@ class DocumentRepository:
             return []
         result = await self.session.execute(select(Document).where(Document.id.in_(document_ids)))
         found = {d.id: d for d in result.scalars()}
-        # Preserve the caller's order so results line up with the request.
         return [found[i] for i in document_ids if i in found]
 
 
@@ -219,13 +195,6 @@ class AssessmentRepository:
         return row
 
     async def shortlist(self, run_id: str) -> list[Assessment]:
-        """Every candidate in a run, in shortlist order.
-
-        Must-have compliance sorts ahead of score, matching
-        :func:`hirelens.assess.pipeline.rank`. A 75 that misses a hard requirement
-        is not better than a 62 that meets them all, and the ordering has to say so
-        in SQL as well as in Python or the API and the CLI would disagree.
-        """
         result = await self.session.execute(
             select(Assessment)
             .where(Assessment.run_id == run_id)

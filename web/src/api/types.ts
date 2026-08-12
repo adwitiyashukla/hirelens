@@ -1,24 +1,5 @@
-/**
- * Types mirroring `hirelens.api.schemas`.
- *
- * Hand-written rather than generated from the OpenAPI document. A generator
- * would produce a wider surface (every field optional, every enum a bare
- * string) and the mismatch would then be caught at runtime instead of at
- * compile time. These are narrow on purpose: `Verdict` and `Band` are unions,
- * so a typo in a comparison is a build error.
- */
-
 export type Verdict = "strong" | "clear" | "partial" | "weak" | "none";
 
-/**
- * The exact strings `CandidateAssessment.band` returns.
- *
- * These are already display text, so the frontend renders them rather than
- * translating them. An earlier version of this file declared a different
- * vocabulary invented here, the label lookup missed on every value, and the
- * band column rendered as an empty pill. Typing it against the source is what
- * turns that into a build error instead of a blank cell.
- */
 export type Band =
   | "strong fit"
   | "possible fit"

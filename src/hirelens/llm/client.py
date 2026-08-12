@@ -1,19 +1,3 @@
-"""The client every other module uses: caching, retries, concurrency, schema repair.
-
-Providers in :mod:`hirelens.llm.providers` are deliberately dumb, they shape one
-request and parse one response. All the reliability behaviour lives here, in one
-place, so it applies identically to whichever backend is configured.
-
-The interesting method is :meth:`LLMClient.structured`, which implements the
-repair loop. Asking a model for JSON and calling ``json.loads`` on the result is
-where most LLM projects quietly break: roughly a few percent of calls come back
-with a missing required field, a string where a number belongs, or a stray
-trailing comma. Crashing on those makes the tool feel broken; silently accepting
-them corrupts the data. The third option, showing the model its own validation
-error and asking it to fix it, recovers the large majority of failures and is what
-production systems actually do.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -43,27 +27,12 @@ TModel = TypeVar("TModel", bound=BaseModel)
 
 _RETRYABLE = (RateLimitError, TransientProviderError)
 
-
-#: Characters per token. Deliberately conservative: English averages closer to
-#: 4.0, and underestimating the cost of a request is what trips the quota, so
-#: the error is biased towards pacing slightly too slowly.
 _CHARS_PER_TOKEN = 3.6
 
-#: Assumed completion length when a request sets no explicit ``max_tokens``.
-#: Quotas count output tokens too, and a judging reply with reasoning is not
-#: small.
 _ASSUMED_COMPLETION_TOKENS = 700
 
 
 def estimate_tokens(request: CompletionRequest) -> int:
-    """Rough token cost of a request, prompt plus expected completion.
-
-    A character heuristic rather than a real tokeniser. Importing ``tiktoken``
-    for this would add a dependency and would still be wrong, since it does not
-    match Llama's or Gemini's vocabularies. The number only has to be good
-    enough to pace against, and being systematically a little high is the safe
-    direction to be wrong in.
-    """
     prompt_chars = sum(len(message.content) for message in request.messages)
     prompt_tokens = int(prompt_chars / _CHARS_PER_TOKEN)
     completion_tokens = request.max_tokens or _ASSUMED_COMPLETION_TOKENS
@@ -71,30 +40,8 @@ def estimate_tokens(request: CompletionRequest) -> int:
 
 
 class RateLimiter:
-    """Paces outgoing traffic against both a request and a token quota.
-
-    Two leaky buckets, because providers meter differently and the binding
-    constraint is whichever runs out first.
-
-    Gemini's free tier caps requests per minute. Groq's caps *tokens* per minute
-    (12,000 on the free tier at the time of writing), and a request-based
-    limiter is structurally blind to that: pacing at a comfortable 25 requests a
-    minute, each carrying about a thousand tokens, aims for 25,000 TPM against a
-    12,000 ceiling and fails roughly half of them. That is exactly what happened
-    here, and the symptom was not an obvious rate-limit error. Extraction calls
-    exhausted their retries, a resume came back with almost no evidence, and the
-    candidate was reported as a weak match. A quota shortfall had turned into a
-    hiring signal.
-
-    Leaky buckets rather than token buckets, deliberately: a token bucket
-    permits an initial burst, and the burst is exactly what trips a per-minute
-    quota when a run fans out twenty judge calls at once.
-    """
-
     def __init__(self, requests_per_minute: int, tokens_per_minute: int = 0) -> None:
         self.request_interval = 60.0 / requests_per_minute if requests_per_minute > 0 else 0.0
-        # Seconds of quota consumed per token, so a request's share of the
-        # minute scales with how large it actually is.
         self.seconds_per_token = 60.0 / tokens_per_minute if tokens_per_minute > 0 else 0.0
         self._lock = asyncio.Lock()
         self._next_request_slot = 0.0
@@ -105,7 +52,6 @@ class RateLimiter:
         return self.request_interval > 0.0 or self.seconds_per_token > 0.0
 
     async def acquire(self, estimated_tokens: int = 0) -> None:
-        """Wait until both quotas allow this request, then reserve its share."""
         if not self.enabled:
             return
 
@@ -115,8 +61,6 @@ class RateLimiter:
 
             if self.request_interval > 0.0:
                 wait = max(wait, self._next_request_slot - now)
-                # Reserve before releasing the lock, so concurrent callers queue
-                # behind each other rather than all reading the same "now".
                 self._next_request_slot = max(now, self._next_request_slot) + self.request_interval
 
             if self.seconds_per_token > 0.0 and estimated_tokens > 0:
@@ -129,11 +73,6 @@ class RateLimiter:
 
 
 def build_provider(settings: Settings | None = None) -> LLMProvider:
-    """Instantiate the backend named in configuration.
-
-    This is the point where credentials actually become necessary, so this is
-    where they are checked.
-    """
     settings = settings or get_settings()
     settings.validate_credentials()
 
@@ -157,18 +96,6 @@ def build_provider(settings: Settings | None = None) -> LLMProvider:
 
 
 class LLMClient:
-    """Reliability wrapper around a provider.
-
-    Responsibilities, in the order a request meets them:
-
-    1. cache lookup
-    2. concurrency limit (a semaphore, so free-tier per-minute quotas survive a
-       batch of resumes)
-    3. call with exponential backoff and jitter on retryable errors
-    4. cache write
-    5. optional Pydantic validation with a repair round-trip
-    """
-
     def __init__(
         self,
         provider: LLMProvider | None = None,
@@ -189,8 +116,6 @@ class LLMClient:
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
 
-    # -- core ----------------------------------------------------------------
-
     async def complete(self, request: CompletionRequest) -> CompletionResponse:
         cached = self.cache.get(request, self.provider.model)
         if cached is not None:
@@ -198,8 +123,6 @@ class LLMClient:
             return cached
 
         async with self._semaphore:
-            # Pace before the call, not after a 429. Cache hits above never reach
-            # here, so a warm cache costs nothing in wall-clock time.
             await self._rate_limiter.acquire(estimate_tokens(request))
             response = await self._complete_with_retries(request)
 
@@ -220,10 +143,6 @@ class LLMClient:
                 if attempt == self.settings.max_retries:
                     break
 
-                # Honour Retry-After when the provider sends one, otherwise back
-                # off exponentially. Full jitter, because a batch of resumes hits
-                # the quota at the same instant and un-jittered retries would all
-                # come back in lockstep and trip it again.
                 suggested = getattr(exc, "retry_after_s", None)
                 delay = suggested if suggested else min(2.0**attempt, 30.0)
                 delay = random.uniform(0.5 * delay, delay)
@@ -237,23 +156,11 @@ class LLMClient:
                 )
                 await asyncio.sleep(delay)
             except InvalidResponseError:
-                # Bad key or malformed request. Retrying changes nothing.
                 raise
 
-        # A rate limit that survives every retry *while pacing is on* is almost
-        # certainly a daily cap, not a per-minute one: the pacer makes a
-        # per-minute breach arithmetically impossible. Saying so turns a
-        # confusing wall of 429s into a clear "come back tomorrow", instead of
-        # sending someone off to tune settings that cannot help.
         if isinstance(last_error, RateLimitError) and self._rate_limiter.enabled:
             detail = str(last_error).lower()
 
-            # Distinguish the two quotas by what the provider actually said.
-            # Getting this wrong sends someone off to tune a number that cannot
-            # possibly help, which is precisely what the previous version of
-            # this message did: it asserted "daily limit" for every persistent
-            # 429, including token-per-minute breaches that were entirely
-            # fixable by setting HIRELENS_TOKENS_PER_MINUTE.
             if "tokens per minute" in detail or "tpm" in detail:
                 raise LLMError(
                     f"Rate limited on the provider's TOKENS-per-minute quota, not its "
@@ -284,8 +191,6 @@ class LLMClient:
             f"Giving up after {self.settings.max_retries + 1} attempts: {last_error}"
         ) from last_error
 
-    # -- convenience ---------------------------------------------------------
-
     async def chat(
         self,
         *,
@@ -294,7 +199,6 @@ class LLMClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> str:
-        """Plain text completion."""
         messages = []
         if system:
             messages.append(Message.system(system))
@@ -320,18 +224,6 @@ class LLMClient:
         temperature: float | None = None,
         max_repair_attempts: int = 2,
     ) -> TModel:
-        """Get a validated Pydantic object back, repairing malformed replies.
-
-        On a validation failure we send the model its own output plus the exact
-        Pydantic error and ask for a correction. In practice one repair round
-        fixes the overwhelming majority of failures, because the errors are almost
-        always mechanical (a missing field, a string where an int belongs) rather
-        than conceptual.
-
-        Raises :class:`InvalidResponseError` if the output is still invalid after
-        ``max_repair_attempts``, so callers can count and report the failure rate
-        instead of receiving silently wrong data.
-        """
         schema = model.model_json_schema()
         messages: list[Message] = []
         if system:
@@ -344,8 +236,6 @@ class LLMClient:
         for attempt in range(max_repair_attempts + 1):
             request = CompletionRequest(
                 messages=tuple(messages),
-                # Nudge the temperature up on a retry: a deterministic decode
-                # that produced invalid JSON will reproduce it exactly.
                 temperature=temp if attempt == 0 else max(temp, 0.2),
                 json_schema=schema,
             )
@@ -354,10 +244,6 @@ class LLMClient:
             try:
                 return model.model_validate(response.json())
             except (ValidationError, ValueError) as exc:
-                # Never leave a response that failed validation in the cache.
-                # The prompt is deterministic, so keeping it would hand the same
-                # malformed answer to every future run and make the failure
-                # permanent, including long after whatever caused it is gone.
                 self.cache.evict(request, self.provider.model)
 
                 last_error = str(exc)[:1500]
@@ -386,16 +272,10 @@ class LLMClient:
             f"{max_repair_attempts + 1} attempts. Last error: {last_error}"
         )
 
-    # -- fan-out -------------------------------------------------------------
-
     async def gather(self, requests: list[CompletionRequest]) -> list[CompletionResponse]:
-        """Run many completions concurrently, bounded by the semaphore."""
         return list(await asyncio.gather(*(self.complete(r) for r in requests)))
 
-    # -- reporting -----------------------------------------------------------
-
     def usage_summary(self) -> dict[str, Any]:
-        """Token and cache accounting. Feeds the cost column of the eval table."""
         return {
             "provider": self.provider.name,
             "model": self.provider.model,

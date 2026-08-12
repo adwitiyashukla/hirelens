@@ -1,25 +1,9 @@
-"""Request and response models for the HTTP API.
-
-Deliberately separate from the domain models in ``hirelens.schemas``. A response
-model is a contract with a frontend and changes for presentation reasons; a domain
-model changes for pipeline reasons. Returning ``CitedResume`` straight out of a
-route would weld the two together, so that renaming an internal field becomes a
-breaking API change.
-
-The separation also lets responses carry things the domain has no opinion about,
-like highlight rectangles resolved from the stored offset map.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-
-# ---------------------------------------------------------------------------
-# Jobs
-# ---------------------------------------------------------------------------
 
 
 class JobCreate(BaseModel):
@@ -56,11 +40,6 @@ class JobOut(BaseModel):
         return bool(self.requirements)
 
 
-# ---------------------------------------------------------------------------
-# Documents
-# ---------------------------------------------------------------------------
-
-
 class DocumentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -73,13 +52,6 @@ class DocumentOut(BaseModel):
 
 
 class UploadResult(BaseModel):
-    """One uploaded file.
-
-    ``created`` is false when the exact bytes were already stored. Surfaced rather
-    than hidden so a recruiter who uploads a duplicate is told, instead of quietly
-    getting a second copy of the same candidate in the shortlist.
-    """
-
     document: DocumentOut
     created: bool
 
@@ -98,11 +70,6 @@ class RejectedUpload(BaseModel):
 
     filename: str
     reason: str
-
-
-# ---------------------------------------------------------------------------
-# Runs
-# ---------------------------------------------------------------------------
 
 
 class RunCreate(BaseModel):
@@ -135,8 +102,6 @@ class RunOut(BaseModel):
 
 
 class RunProgress(BaseModel):
-    """One server-sent event during a run."""
-
     model_config = ConfigDict(frozen=True)
 
     run_id: str
@@ -152,19 +117,7 @@ class RunProgress(BaseModel):
         return self.status in ("completed", "failed")
 
 
-# ---------------------------------------------------------------------------
-# Assessments
-# ---------------------------------------------------------------------------
-
-
 class ShortlistEntry(BaseModel):
-    """A row in the ranked candidate table. Deliberately thin.
-
-    The shortlist view renders dozens of these, so it carries only what the table
-    shows. Per-requirement verdicts and citations arrive when a candidate is
-    opened, from the detail endpoint.
-    """
-
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -187,8 +140,6 @@ class ShortlistOut(BaseModel):
 
 
 class HighlightBox(BaseModel):
-    """A rectangle to draw over the rendered PDF."""
-
     model_config = ConfigDict(frozen=True)
 
     page: int
@@ -199,13 +150,6 @@ class HighlightBox(BaseModel):
 
 
 class CitationOut(BaseModel):
-    """A citation, resolved against the stored document.
-
-    ``quote`` is re-read from the stored text rather than trusted from the saved
-    payload, and ``verified`` records whether it still checks out. That makes the
-    grounding claim re-checkable at read time, not only at write time.
-    """
-
     model_config = ConfigDict(frozen=True)
 
     start: int
@@ -249,8 +193,6 @@ class QuestionOut(BaseModel):
 
 
 class AssessmentDetail(BaseModel):
-    """Everything the candidate detail view needs, in one request."""
-
     id: str
     run_id: str
     document: DocumentOut
@@ -269,18 +211,11 @@ class AssessmentDetail(BaseModel):
 
 
 class DocumentText(BaseModel):
-    """The document text plus its offset map, for rendering highlights."""
-
     document_id: str
     filename: str
     page_count: int
     text: str
     blocks: list[dict[str, Any]] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Health
-# ---------------------------------------------------------------------------
 
 
 class HealthOut(BaseModel):

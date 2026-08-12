@@ -1,5 +1,3 @@
-"""Phase 4 tests: verdict aggregation, judging, self-consistency, risks, pipeline."""
-
 from __future__ import annotations
 
 import json
@@ -40,10 +38,6 @@ from hirelens.schemas.job import (
 )
 from hirelens.schemas.resume import CitedResume, Project, WorkExperience
 
-# ---------------------------------------------------------------------------
-# Fixtures and helpers
-# ---------------------------------------------------------------------------
-
 SOURCE = """Backend Engineer, Fintech Co. 2021 - present
 Deployed and operated the payments service on Kubernetes.
 Built a Kafka consumer group processing 2M settlement events per day.
@@ -68,12 +62,6 @@ def cite(fragment: str) -> Cited[str]:
 
 
 def unit(unit_id: str, fragment: str, *, context: str = "") -> EvidenceUnit:
-    """An evidence unit whose span really covers ``fragment`` in SOURCE.
-
-    ``context`` mirrors what chunking does in production: it widens the searchable
-    text without widening the span, so these fixtures exercise the same
-    text-versus-quote split the real pipeline has.
-    """
     start = SOURCE.index(fragment)
     return EvidenceUnit(
         unit_id=unit_id,
@@ -118,8 +106,6 @@ def settings_for(tmp_path: Path, **overrides):
 
 
 class SequenceProvider(LLMProvider):
-    """Cycles through scripted verdicts, so sample spread can be controlled."""
-
     name = "seq"
     model = "seq-model"
 
@@ -144,17 +130,11 @@ def judgement(verdict: str, units: list[str] | None = None) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Verdict scale
-# ---------------------------------------------------------------------------
-
-
 class TestVerdictAggregation:
     def test_unanimous_samples(self) -> None:
         assert aggregate_verdicts([Verdict.CLEAR] * 5) is Verdict.CLEAR
 
     def test_median_not_mode(self) -> None:
-        """Mode would pick WEAK here; the median is the more defensible answer."""
         samples = [Verdict.WEAK, Verdict.WEAK, Verdict.CLEAR, Verdict.STRONG, Verdict.STRONG]
         assert aggregate_verdicts(samples) is Verdict.CLEAR
 
@@ -163,7 +143,6 @@ class TestVerdictAggregation:
         assert aggregate_verdicts(samples) is Verdict.CLEAR
 
     def test_even_split_resolves_downward(self) -> None:
-        """Overstating fit is the costlier error, so ties go to the lower verdict."""
         assert aggregate_verdicts([Verdict.PARTIAL, Verdict.CLEAR]) is Verdict.PARTIAL
 
     def test_empty_samples(self) -> None:
@@ -190,7 +169,7 @@ class TestRequirementAssessment:
 
     def test_points_are_weight_times_coefficient(self) -> None:
         item = self.build(Verdict.CLEAR, [Verdict.CLEAR] * 5, weight=20.0)
-        assert item.points == pytest.approx(16.0)  # 20 * 0.8
+        assert item.points == pytest.approx(16.0)
 
     def test_consistent_samples_are_not_ambiguous(self) -> None:
         item = self.build(Verdict.CLEAR, [Verdict.CLEAR] * 5)
@@ -237,7 +216,7 @@ class TestCandidateAssessment:
                 ),
             ]
         )
-        assert a.score == pytest.approx(68.0)  # 60*0.8 + 40*0.5
+        assert a.score == pytest.approx(68.0)
 
     def test_confidence_band_reflects_sample_spread(self) -> None:
         a = self.build(
@@ -253,8 +232,8 @@ class TestCandidateAssessment:
             ]
         )
         low, high = a.score_range
-        assert low == pytest.approx(20.0)  # WEAK
-        assert high == pytest.approx(80.0)  # CLEAR
+        assert low == pytest.approx(20.0)
+        assert high == pytest.approx(80.0)
         assert a.uncertainty == pytest.approx(60.0)
 
     def test_unanimous_samples_give_a_zero_width_band(self) -> None:
@@ -273,7 +252,6 @@ class TestCandidateAssessment:
         assert a.uncertainty == 0.0
 
     def test_unmet_must_have_overrides_a_good_score(self) -> None:
-        """A 75 that is missing a hard requirement is not a strong fit."""
         a = self.build(
             [
                 RequirementAssessment(
@@ -322,14 +300,8 @@ class TestCandidateAssessment:
         assert a.sorted_assessments()[0].requirement_text == "must"
 
 
-# ---------------------------------------------------------------------------
-# Judge
-# ---------------------------------------------------------------------------
-
-
 class TestJudgePrompt:
     def test_prompt_contains_only_the_retrieved_evidence(self) -> None:
-        """The judge must not be able to reach for unrelated resume content."""
         prompt = build_prompt(
             requirement("Has run Kubernetes in production"),
             [
@@ -379,7 +351,6 @@ class TestRequirementJudge:
         assert len(set(result.samples)) > 1
 
     async def test_samples_are_not_collapsed_by_the_cache(self, tmp_path: Path) -> None:
-        """The classic way to fake self-consistency: k identical cached requests."""
         provider = SequenceProvider([judgement("clear")])
         settings = settings_for(tmp_path, cache_enabled=True)
         judge = RequirementJudge(LLMClient(provider, settings=settings), settings=settings)
@@ -387,7 +358,6 @@ class TestRequirementJudge:
             requirement("Has run Kubernetes"),
             [hit("u1", "Deployed and operated the payments service on Kubernetes.")],
         )
-        # Five distinct prompts, so five real calls rather than one plus four hits.
         assert len(provider.calls) == 5
         assert len(set(provider.calls)) == 5
 
@@ -426,12 +396,10 @@ class TestRequirementJudge:
             requirement("Has used Kafka"),
             [hit("u1", "Built a Kafka consumer group processing 2M settlement events per day.")],
         )
-        # Falls back to the top hit rather than emitting a citation to nothing.
         assert len(result.citations) == 1
         assert result.citations[0].verify(SOURCE)
 
     async def test_a_none_verdict_carries_no_citations(self, tmp_path: Path) -> None:
-        """'Nothing supports this' and 'here is the evidence' cannot both be true."""
         provider = SequenceProvider([judgement("none", ["u1"])])
         judge = RequirementJudge(
             LLMClient(provider, settings=settings_for(tmp_path)), settings=settings_for(tmp_path)
@@ -453,11 +421,6 @@ class TestRequirementJudge:
             [hit("u1", "Built a Kafka consumer group processing 2M settlement events per day.")],
         )
         assert all(c.verify(SOURCE) for c in result.citations)
-
-
-# ---------------------------------------------------------------------------
-# Risks
-# ---------------------------------------------------------------------------
 
 
 class TestDateParsing:
@@ -566,11 +529,6 @@ class TestRiskFlags:
         assert any(f.code == "unmet_must_have" for f in flags)
 
 
-# ---------------------------------------------------------------------------
-# Interview questions
-# ---------------------------------------------------------------------------
-
-
 class TestGapCollection:
     def test_unmet_must_haves_come_first(self) -> None:
         assessment = CandidateAssessment(
@@ -616,11 +574,6 @@ class TestGapCollection:
         assert collect_gaps(assessment, CitedResume(document_id="doc-1")) == []
 
 
-# ---------------------------------------------------------------------------
-# Ranking and pipeline
-# ---------------------------------------------------------------------------
-
-
 def make_result(score_weight: float, verdict: Verdict, must_verdict: Verdict):
     from hirelens.assess.pipeline import ScreeningResult
 
@@ -662,8 +615,6 @@ class TestRanking:
 
 
 class PipelineProvider(LLMProvider):
-    """Answers every stage of the pipeline based on prompt content."""
-
     name = "pipeline"
     model = "pipeline-model"
 
@@ -780,7 +731,6 @@ class TestScreeningPipeline:
     async def test_blind_mode_labels_the_candidate_anonymously(
         self, resume_doc, tmp_path: Path
     ) -> None:
-        """Labelling a blinded assessment with the filename would leak identity."""
         pipeline = self.build(tmp_path)
         _, results = await pipeline.screen_batch([resume_doc], JD)
         assert results[0].assessment.candidate_label.startswith("candidate-")
@@ -799,7 +749,6 @@ class TestScreeningPipeline:
     async def test_the_rubric_is_compiled_once_for_the_whole_batch(
         self, resume_doc, tmp_path: Path
     ) -> None:
-        """Per-candidate rubrics would make the scores incomparable."""
         provider = PipelineProvider()
         settings = settings_for(tmp_path, self_consistency_k=1)
         pipeline = ScreeningPipeline(
@@ -826,19 +775,6 @@ class TestScreeningPipeline:
 
 
 class TestDegenerateOutputIsRejected:
-    """The pipeline must refuse to score when a stage returned nothing usable.
-
-    Both guards were written after a real incident. Swapping to a provider that
-    cannot be sent a response schema produced a rubric with zero must-haves and
-    an extraction with one evidence unit from an 1100-character resume. The
-    pipeline reported 0 out of 100 with grounding 100%, citations valid 100% and
-    agreement 100%.
-
-    Those metrics are ratios, so they measure internal consistency and are
-    trivially perfect over an almost empty set. Absolute floors are what was
-    missing.
-    """
-
     JD = (
         "Senior Backend Engineer\n\n"
         "Requirements\n"
@@ -875,17 +811,11 @@ class TestDegenerateOutputIsRejected:
         assert RubricCompiler._degeneracy(rubric, self.JD) == ""
 
     def test_a_posting_with_no_stated_requirements_may_have_no_must_haves(self) -> None:
-        """Not every posting has hard requirements, and inventing them is worse."""
         casual = "We are looking for someone to help with our backend. Come talk to us."
         rubric = self._rubric([RequirementKind.NICE_TO_HAVE] * 3)
         assert RubricCompiler._degeneracy(rubric, casual) == ""
 
     def test_the_message_reads_as_a_correction_to_the_model(self) -> None:
-        """It is fed straight back into the retry prompt, so it must be an instruction.
-
-        Environment-variable advice belongs in the final error a person reads,
-        not in a correction addressed to a model that cannot act on it.
-        """
         message = RubricCompiler._degeneracy(
             self._rubric([RequirementKind.NICE_TO_HAVE] * 8), self.JD
         )
@@ -893,11 +823,8 @@ class TestDegenerateOutputIsRejected:
         assert "HIRELENS_" not in message
 
     def test_an_empty_rubric_cannot_even_be_constructed(self) -> None:
-        """The schema catches this one first, so the guard never sees it."""
         with pytest.raises(ValueError, match="at least one requirement"):
             self._rubric([])
-
-    # -- extraction ---------------------------------------------------------
 
     @staticmethod
     def _document(length: int) -> SourceDocument:
@@ -911,20 +838,16 @@ class TestDegenerateOutputIsRejected:
         )
 
     def test_one_unit_from_a_full_resume_is_rejected(self) -> None:
-        """The exact observed failure: 1 unit from 1100 characters."""
         with pytest.raises(ValueError, match="Refusing to score"):
             _reject_degenerate_extraction(self._document(1100), [object()])
 
     def test_a_healthy_extraction_passes(self) -> None:
-        # Real resumes yield roughly one unit per 50 to 80 characters.
         _reject_degenerate_extraction(self._document(1100), [object()] * 20)
 
     def test_a_short_document_is_exempt(self) -> None:
-        """A stub really can produce almost nothing, and that is not a bug."""
         _reject_degenerate_extraction(self._document(200), [])
 
     def test_the_error_names_both_numbers(self) -> None:
-        """So the reader can judge the call rather than trust the threshold."""
         with pytest.raises(ValueError) as caught:
             _reject_degenerate_extraction(self._document(1200), [object()])
         message = str(caught.value)

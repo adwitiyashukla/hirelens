@@ -1,9 +1,3 @@
-"""Command line interface.
-
-Commands land here as each phase completes. Right now Phase 1 is done, so the
-available commands cover configuration checking and ingestion.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -37,17 +31,11 @@ def _configure_logging(verbose: bool) -> None:
 
 @app.command()
 def version() -> None:
-    """Print the version."""
     console.print(f"hirelens {__version__}")
 
 
 @app.command()
 def doctor() -> None:
-    """Check that configuration is sane and the chosen provider answers.
-
-    Run this first. It gives a clear message for the two failure modes that
-    otherwise cost people an hour: a missing API key, and Ollama not running.
-    """
     try:
         settings = get_settings()
     except Exception as exc:
@@ -105,13 +93,6 @@ async def _ping() -> str:
 
 @app.command()
 def models() -> None:
-    """List the models your API key can actually use.
-
-    Providers retire model names without warning, and a retired name produces a
-    404 that reads like a broken key rather than a stale config value. Asking the
-    provider what it currently offers turns a confusing failure into a one-line
-    fix.
-    """
     settings = get_settings()
 
     if settings.llm_provider is Provider.OLLAMA:
@@ -158,7 +139,6 @@ def models() -> None:
 
 
 async def _list_gemini_models(api_key: str) -> list[tuple[str, str]]:
-    """Models supporting text generation, from the provider's own catalogue."""
     import httpx
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -175,19 +155,11 @@ async def _list_gemini_models(api_key: str) -> list[tuple[str, str]]:
             entry.get("description", ""),
         )
         for entry in payload.get("models", [])
-        # Embedding and vision-only models cannot answer a chat prompt, so
-        # listing them would just invite a second confusing failure.
         if "generateContent" in entry.get("supportedGenerationMethods", [])
     ]
 
 
 async def _list_groq_models(api_key: str) -> list[tuple[str, str]]:
-    """Groq's catalogue, via its OpenAI-compatible models endpoint.
-
-    Groq retires model names on roughly the same cadence as Google, and the
-    resulting failure is equally opaque: a 404 that looks like a bad key. Same
-    command, same fix, one fewer confusing evening.
-    """
     import httpx
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -203,9 +175,6 @@ async def _list_groq_models(api_key: str) -> list[tuple[str, str]]:
         name = entry.get("id", "")
         if not name:
             continue
-        # Whisper is speech to text and the guard models only classify content,
-        # so neither can answer a judging prompt. Listing them would just invite
-        # a second confusing failure.
         if any(token in name.lower() for token in ("whisper", "guard", "tts")):
             continue
         window = entry.get("context_window")
@@ -217,12 +186,6 @@ async def _list_groq_models(api_key: str) -> list[tuple[str, str]]:
 
 
 def _suggest_groq_model(names: list[str]) -> str | None:
-    """Prefer a large, general instruction-tuned model.
-
-    The judging stage is where reasoning quality shows up most directly, so the
-    bigger model is worth the slower tokens. Groq is fast enough that "slower"
-    is still faster than most alternatives.
-    """
     preferred = [
         name
         for name in names
@@ -236,18 +199,6 @@ def _suggest_groq_model(names: list[str]) -> str | None:
 
 
 def _suggest_model(names: list[str]) -> str | None:
-    """Pick the best default for this project: a full flash model.
-
-    Flash tiers are the fast, high-quota ones, which is what a free-tier user
-    needs. Three preferences, in order:
-
-    1. A ``latest`` alias, because it never goes stale the way a pinned version
-       does. This whole command exists because a pinned name was retired.
-    2. Not ``lite``. Lite variants trade reasoning quality for speed, and the
-       judging stage is the part of this pipeline where reasoning quality shows
-       up most directly.
-    3. Not a special-purpose variant (image, tts, thinking, preview).
-    """
     excluded = ("lite", "image", "tts", "thinking", "preview", "robotics")
     candidates = [
         name for name in names if "flash" in name and not any(token in name for token in excluded)
@@ -259,7 +210,6 @@ def _suggest_model(names: list[str]) -> str | None:
     if aliases:
         return aliases[0]
 
-    # No alias offered: take the highest version number.
     return sorted(candidates, reverse=True)[0]
 
 
@@ -272,11 +222,6 @@ def ingest(
     ] = 0,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
-    """Read a document and report the offset map.
-
-    This is the foundation everything else stands on: if the offsets are wrong
-    here, every citation downstream points at the wrong text.
-    """
     _configure_logging(verbose)
 
     doc = read_document(path)
@@ -316,11 +261,6 @@ def redact_preview(
     path: Annotated[Path, typer.Argument(help="Resume file")],
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
-    """Show what blind mode removes, and prove offsets survive it.
-
-    Useful on its own, and a fast way to sanity-check the fairness controls before
-    trusting a score.
-    """
     _configure_logging(verbose)
 
     from hirelens.extract import redact
@@ -357,7 +297,6 @@ def parse(
     ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
-    """Parse a resume into structured data where every field cites its source."""
     _configure_logging(verbose)
 
     doc = read_document(path)
@@ -466,12 +405,6 @@ def match(
     ] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
-    """Show which lines of a resume answer which requirement of a job description.
-
-    This is the retrieval stage on its own, before any judging. Running it in
-    isolation is the fastest way to tell whether a bad score is a retrieval
-    problem or a reasoning problem.
-    """
     _configure_logging(verbose)
 
     jd_text = jd_path.read_text(encoding="utf-8")
@@ -520,8 +453,6 @@ async def _run_match(
 
     extractor = ResumeExtractor()
     try:
-        # One client is shared, so the rubric compile and the six extraction calls
-        # all draw on the same cache, semaphore and token accounting.
         compiler = RubricCompiler(extractor.client)
         rubric, extraction = await asyncio.gather(compiler.compile(jd_text), extractor.extract(doc))
     finally:
@@ -549,7 +480,6 @@ def score(
     ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
-    """Score candidates against a job description, with evidence and confidence bands."""
     _configure_logging(verbose)
 
     jd_text = jd.read_text(encoding="utf-8")

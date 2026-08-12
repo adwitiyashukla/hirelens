@@ -1,43 +1,16 @@
-"""Ranking metrics, with confidence intervals.
-
-Implemented here rather than pulled from scipy. Three reasons, in order of
-importance:
-
-1. **Ties are the normal case.** Human labels come in as tiers, so a dozen
-   candidates might occupy four distinct levels. Correlation coefficients behave
-   differently under ties, and the tie corrections are the part worth being
-   explicit about rather than delegating.
-2. **No heavyweight dependency in the core path.** The eval harness should run on
-   a fresh clone without a scientific Python stack.
-3. It is about a hundred lines, and an ML engineer should be able to write them.
-
-**Every point estimate ships with a confidence interval.** On a golden set of
-twelve candidates, a Spearman rho of 0.78 could easily be 0.45 or 0.94; reporting
-the bare number would be overclaiming by a wide margin. The intervals here are
-bootstrap percentile intervals, which make no distributional assumption, and on a
-sample this small they come out honestly wide. That width is information: it says
-the golden set needs to grow before the headline number can be leaned on.
-"""
-
 from __future__ import annotations
 
 import math
 import random
 from dataclasses import dataclass
 
-# Resampling count for bootstrap intervals. 2000 is plenty for a percentile
-# interval at this sample size and keeps `make eval` fast.
 _BOOTSTRAP_SAMPLES = 2000
 
-# Fixed seed so the reported intervals are reproducible run to run. A metric that
-# moves when nothing changed is indistinguishable from a regression.
 _BOOTSTRAP_SEED = 20260728
 
 
 @dataclass(frozen=True, slots=True)
 class Estimate:
-    """A point estimate with a bootstrap percentile interval."""
-
     value: float
     low: float
     high: float
@@ -54,17 +27,7 @@ class Estimate:
         return f"{self.value:.{digits}f} [{self.low:.{digits - 1}f}, {self.high:.{digits - 1}f}]"
 
 
-# ---------------------------------------------------------------------------
-# Rank helpers
-# ---------------------------------------------------------------------------
-
-
 def rank_with_ties(values: list[float]) -> list[float]:
-    """Fractional ranks, averaging tied positions.
-
-    Tied values must share the average of the ranks they span, otherwise the
-    correlation depends on the arbitrary order equal items happened to arrive in.
-    """
     order = sorted(range(len(values)), key=lambda i: values[i])
     ranks = [0.0] * len(values)
     position = 0
@@ -82,7 +45,6 @@ def rank_with_ties(values: list[float]) -> list[float]:
 
 
 def pearson(xs: list[float], ys: list[float]) -> float:
-    """Pearson correlation. Returns 0.0 when either series has no variance."""
     n = len(xs)
     if n < 2:
         return 0.0
@@ -98,26 +60,12 @@ def pearson(xs: list[float], ys: list[float]) -> float:
 
 
 def spearman(xs: list[float], ys: list[float]) -> float:
-    """Spearman rank correlation, tie-corrected.
-
-    Computed as Pearson on fractional ranks, which is the definition that stays
-    correct under ties. The shortcut formula using summed squared rank differences
-    is only valid without them, and would quietly mis-report on tiered human
-    labels.
-    """
     if len(xs) != len(ys) or len(xs) < 2:
         return 0.0
     return pearson(rank_with_ties(xs), rank_with_ties(ys))
 
 
 def kendall_tau_b(xs: list[float], ys: list[float]) -> float:
-    """Kendall tau-b: the tie-adjusted concordance coefficient.
-
-    Reported alongside Spearman because it answers a more directly meaningful
-    question for a shortlist: of all candidate pairs, what fraction did we order
-    the same way a human did? It is also less sensitive than Spearman to a single
-    badly misplaced item, so a large gap between the two is itself diagnostic.
-    """
     n = len(xs)
     if n < 2:
         return 0.0
@@ -143,12 +91,6 @@ def kendall_tau_b(xs: list[float], ys: list[float]) -> float:
 
 
 def inversion_rate(xs: list[float], ys: list[float]) -> float:
-    """Fraction of comparable pairs ordered the wrong way round.
-
-    The most interpretable number in this module: "we disagree with the human on
-    N% of head-to-head comparisons". Pairs the human considered equal are
-    excluded, because there is no wrong answer for those.
-    """
     n = len(xs)
     comparable = inverted = 0
 
@@ -164,12 +106,6 @@ def inversion_rate(xs: list[float], ys: list[float]) -> float:
 
 
 def top_k_precision(system: list[float], human: list[float], k: int = 3) -> float:
-    """Of our top k, what fraction sit in the human's top k tier band?
-
-    A recruiter only ever reads the top of the list, so this measures the thing
-    they actually experience. Correlation over the full ranking can look healthy
-    while the top three are wrong.
-    """
     if not system or k <= 0:
         return 0.0
 
@@ -185,11 +121,6 @@ def mean_absolute_error(xs: list[float], ys: list[float]) -> float:
     return sum(abs(a - b) for a, b in zip(xs, ys, strict=True)) / len(xs)
 
 
-# ---------------------------------------------------------------------------
-# Bootstrap
-# ---------------------------------------------------------------------------
-
-
 def bootstrap(
     xs: list[float],
     ys: list[float],
@@ -199,18 +130,9 @@ def bootstrap(
     confidence: float = 0.95,
     seed: int = _BOOTSTRAP_SEED,
 ) -> Estimate:
-    """Percentile bootstrap interval for a paired statistic.
-
-    Resamples candidate pairs with replacement, recomputes the statistic, and
-    takes the empirical percentiles. Percentile rather than normal-approximation
-    intervals because correlation coefficients are bounded and skewed near the
-    ends, where a symmetric interval would run past 1.0 and be obviously wrong.
-    """
     n = len(xs)
     point = statistic(xs, ys)
     if n < 3:
-        # Too few pairs for resampling to say anything. Report the full possible
-        # range rather than a falsely narrow interval.
         return Estimate(value=point, low=-1.0, high=1.0, n=n)
 
     rng = random.Random(seed)
@@ -220,8 +142,6 @@ def bootstrap(
         indices = [rng.randrange(n) for _ in range(n)]
         resampled_x = [xs[i] for i in indices]
         resampled_y = [ys[i] for i in indices]
-        # A resample can be constant, leaving the statistic undefined. Skipping
-        # those is standard and only removes degenerate draws.
         if len(set(resampled_y)) < 2 or len(set(resampled_x)) < 2:
             continue
         values.append(statistic(resampled_x, resampled_y))
@@ -244,13 +164,7 @@ def kendall_ci(xs: list[float], ys: list[float], **kwargs) -> Estimate:
     return bootstrap(xs, ys, kendall_tau_b, **kwargs)
 
 
-# ---------------------------------------------------------------------------
-# Distribution summaries
-# ---------------------------------------------------------------------------
-
-
 def percentile(values: list[float], fraction: float) -> float:
-    """Linear-interpolated percentile. ``fraction`` is in [0, 1]."""
     if not values:
         return 0.0
     ordered = sorted(values)
@@ -268,8 +182,6 @@ def percentile(values: list[float], fraction: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class Distribution:
-    """Summary of a set of measurements, for latency and score spread."""
-
     mean: float
     p50: float
     p95: float
