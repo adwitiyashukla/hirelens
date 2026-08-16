@@ -7,35 +7,11 @@ A resume screener where every score points back at the line of the resume it cam
 [![Code style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Runs free](https://img.shields.io/badge/API%20cost-%240.00-brightgreen.svg)](#running-it)
 
-## Why I did not build the obvious version
-
-The obvious version of this project is about fifteen lines:
-
-```
-resume.pdf  ->  extract text  ->  "score this candidate out of 100"  ->  87
-```
-
-I wrote that in an afternoon and then sat looking at the number 87 trying to work out what I was
-supposed to do with it.
-
-It cannot explain itself. There is no line of the resume I can point at and say this is where the
-87 came from. It is not reproducible either: I ran it twice on the same PDF and got 87, then 81,
-and nothing in the tool would ever have told me that. And it has never been checked against a
-person, so there is no way to say whether the ranking is any good.
-
-In a lot of places it would also be illegal to ship. NYC Local Law 144 requires an annual bias
-audit of any automated employment decision tool, and the EU AI Act puts employment screening in
-its high-risk category.
-
-So I built the other thing. The rule I gave myself was that a screening decision is only worth
-anything if I can defend it, and every choice below falls out of that.
-
-| Property | What it means | How it is built |
-|---|---|---|
-| Grounded | Every claim points to an exact character range in the source document | Span-tracked ingestion, citation-carrying schemas, retrieval-scoped judging |
-| Stable | Re-running the same input gives the same decision, and the spread is published | Self-consistency sampling, median aggregation, bootstrap intervals |
-| Measured | There is a number for how well it agrees with a human screener | Golden set, Spearman correlation, three baselines, a CI regression gate |
-| Fair | Demographic swaps are actively tested and the build fails if they move the score | Counterfactual perturbation harness with a null control |
+It takes a job description and a pile of resumes and returns a ranked shortlist. What makes it
+different from the usual version is that no number in the output stands on its own. Every score
+carries the character range of the resume it came from, a confidence band from repeated sampling,
+and a note when the evidence was ambiguous enough that a person should look. There is also an
+evaluation harness that measures the ranking against human labels rather than assuming it works.
 
 ## Where the data came from
 
@@ -47,10 +23,10 @@ profiles across 3 job descriptions, giving 36 candidate-job pairs. Each profile 
 spec plus a deterministic renderer rather than a PDF I wrote by hand, which turned out to matter
 more than I expected. The profiles are diffable in git, they render identically every time so the
 response cache hits and runs are reproducible, and demographic attributes live in their own
-fields. That last part is what makes the bias audit possible at all: swap only the name and the
-university, re-render, re-score, and any movement was caused by the swap rather than correlated
-with it. A test asserts that everything outside the demographic block is byte-identical between
-variants.
+fields. That last part is what lets me test the system for demographic bias at all: swap only the
+name and the university, re-render, re-score, and any movement was caused by the swap rather than
+correlated with it. A test asserts that everything outside the demographic block is byte-identical
+between variants.
 
 ## The data problem that took real thought
 
@@ -204,60 +180,6 @@ make demo          # builds the dashboard, serves everything on http://localhost
 `make api` and `make web` in two terminals gives hot reload on both sides, with Vite proxying
 `/api` so there is no CORS to configure.
 
-## Three bugs worth reading about
-
-I developed the whole pipeline against Gemini. Then I pointed it at Groq as a second provider and
-it broke in three different ways in one afternoon, and a fourth turned up while I was fixing the
-third. All of them were silent: the system produced confident, well-formed, completely wrong
-output while every quality metric in the report read 100%.
-
-### The schema was never sent to the provider that needed it most
-
-Gemini accepts a JSON schema with the request. Groq's API offers only "reply with valid JSON" and
-no schema at all, and I had not noticed. So the model was inferring field names from the prose in
-my prompt, getting them wrong, and the repair loop was burning its attempts on the same mistake.
-
-It eventually settled on a sparse object that validated, because the fields it had missed all had
-defaults. The rubric compiled to eight requirements with zero must-haves, so every candidate
-trivially met all of them, and a genuinely strong candidate scored 0 out of 100.
-
-The fix renders the schema into the prompt as a field list with enum values when the provider
-cannot take a real one. What I actually learned is that adding a default to make validation pass
-turns a loud failure into a silent one.
-
-### Grounding and citation validity are ratios, so they were perfect over an empty set
-
-That 0-out-of-100 report showed grounding 100%, citations valid 100%, agreement 100%. All three
-were true. One claim had been extracted and it was correctly cited, so every ratio was 1 over 1.
-
-Then it clicked that these metrics only measure internal consistency. They say nothing about
-coverage, and a system that extracts nothing scores perfectly on all of them.
-
-Two absolute floors sit alongside the ratios now. Extraction that yields almost nothing from a
-substantial document raises instead of scoring, and a rubric that compiles to no must-haves from a
-posting that clearly lists requirements gets one corrective retry before being rejected.
-
-### The rate limiter counted the wrong thing
-
-I was pacing at a comfortable 25 requests a minute and getting rate limited anyway, which made no
-sense until I read the Groq docs properly. Groq meters tokens per minute, not requests. Each call
-carried roughly a thousand tokens, so 25 requests a minute was aiming at 25,000 TPM against a
-12,000 ceiling.
-
-The visible symptom was much worse than a 429. Extraction calls exhausted their retries, the
-resume came back with almost no evidence attached, and the candidate was reported as a weak match.
-A quota shortfall had turned itself into a hiring signal, which is exactly the failure class this
-project exists to prevent. The limiter now runs two leaky buckets, one for requests and one for
-tokens, and reserves token budget in proportion to each request's estimated size.
-
-### And a fourth, found while fixing the third
-
-Responses that failed schema validation were being left in the cache. Since prompts are
-deterministic, the next run replayed the same malformed answer and failed identically, forever,
-long after the provider itself was fine. Invalid responses get evicted now. The same investigation
-turned up that the test suite was reading my local `.env`, so adding one line to it made all 397
-tests hang. Tests are isolated by an autouse fixture now.
-
 ## Evaluation
 
 Most resume screeners are never evaluated at all. This one is built around the harness, and it is
@@ -316,79 +238,6 @@ The interval is worth looking at even so. On 36 pairs a rho of 0.669 carries a 9
 roughly 0.41 to 0.82. Quoting the point estimate alone would be overclaiming by a wide margin, and
 the width of that interval is itself the finding: 36 pairs is not enough. It is also why every
 point estimate in this project ships with a bootstrap interval.
-
-## Bias audit
-
-NYC Local Law 144 requires an annual bias audit of automated employment decision tools, and the EU
-AI Act classifies employment screening as high-risk. This is the measurement such a filing would
-be built on.
-
-```bash
-make audit-plan   # show the experiment matrix and exact cost, spending nothing
-make audit        # run it
-make audit-smoke  # prove the audit catches injected bias, no API key needed
-```
-
-The method is the audit-study design from labour economics, pointed at a model instead of at
-employers. Bertrand and Mullainathan sent out identical resumes varying only the name and measured
-callback rates. Here the resume is held byte-identical apart from the demographic block and the
-outcome is the score. Four axes: gender-coded names, ethnicity-coded names, university prestige,
-and location.
-
-Two design choices carry the whole thing.
-
-The first is a null control. The same unmodified resume is scored twice, and that difference is
-the system's own run-to-run noise. Every axis is then reported as excess drift above that floor. A
-three-point swing when the name changes means nothing if the score swings three points when
-nothing changes at all. It is also why the audit turns the response cache off: with caching on,
-two identical runs hit the same cache entry and the noise floor is zero by construction rather
-than by measurement. A test asserts the cache is off even when a client is injected.
-
-The second is measuring blind and sighted both. Blind mode is how the system ships, so blind
-results gate the build. The sighted run measures the underlying model bias that masking
-suppresses, and the difference between the two says what the mitigation is actually worth. The
-gate never fails on sighted numbers, because those exist to measure the problem blind mode solves,
-not to punish me for having measured it.
-
-### Testing the audit against a model I rigged to be biased
-
-An audit that reports clean on a definitely-biased system is worse than no audit, so
-`make audit-smoke` runs two cases against a stand-in model. One is clean. The other is rigged to
-upgrade its verdict whenever an elite institution appears.
-
-```
-CASE 2: stand-in rigged to reward elite institutions
-
-BLIND MODE ON (shipping configuration)
-axis                           max   excess     gap  flips  verdict
-university prestige           0.00     0.00    0.00      0  ok
-
-BLIND MODE OFF (diagnostic)
-axis                           max   excess     gap  flips  verdict
-university prestige          63.40    63.40   24.08      3  OVER THRESHOLD
-
-blind mode removes 63.40 pts of worst-case drift (63.40 -> 0.00)
-largest sighted gap: 'elite' scores 24.08 pts above 'mid' on the university prestige axis
-```
-
-The audit sees the injected bias, attributes it to the right axis and the right group, counts the
-three shortlist positions it moved, and confirms masking blocks it completely. Both cases run in
-CI on every commit.
-
-| | |
-|---|---|
-| ![Audit on a clean model](docs/screenshots/audit_case1.png) | ![Audit catching injected bias](docs/screenshots/audit_case2.png) |
-| **Case 1, clean stand-in.** Every axis at 0.00 drift, no flips, audit passes. An instrument that cannot stay quiet on a clean system is useless. | **Case 2, rigged stand-in.** 63.40 points of drift with blind mode off, 0.00 with it on, and 3 shortlist positions moved. |
-
-The pair is the point. Case 2 alone would only show the audit fires, Case 1 alone would only show
-it stays quiet. Together they show it fires when and only when there is something to find. These
-are stand-in numbers proving the instrument works, not a result about a real model. Running it
-against a real provider is one command and writes `docs/BIAS_AUDIT.md`.
-
-One rule falls out of all this and applies to the main pipeline too: risk flags never change the
-score. An employment gap can be caregiving, illness, study, or a startup that failed, and every one
-of those correlates with a protected characteristic. Deducting points would encode the exact bias
-this audit exists to detect. The flag is surfaced and a human decides.
 
 ## Running it
 
@@ -457,6 +306,11 @@ INTERVIEW QUESTIONS
   2. What was your specific contribution to the nbdime upstream merge?
      -> Open source evidence was borderline across runs.
 ```
+
+Those risk flags never change the score, which is deliberate. An employment gap can be caregiving,
+illness, study, or a startup that failed, and every one of those correlates with a protected
+characteristic, so deducting points for it would quietly encode exactly the bias the project is
+supposed to avoid. The fact gets surfaced and a human decides.
 
 `redact-preview` on a sample resume. Identity goes, every technical claim and every character
 offset survives:
@@ -553,30 +407,6 @@ generator would have produced a looser surface where the same mistake becomes a 
 I also used plain `httpx` instead of three vendor SDKs. Three SDKs means three auth conventions,
 three retry behaviours and three async styles to reconcile, and each provider needs about twenty
 lines of request shaping.
-
-## Tests
-
-```bash
-make check      # ruff + mypy strict + pytest
-make test       # Python unit tests, no network, no API key
-make web-test   # dashboard typecheck and unit tests
-```
-
-397 Python tests and 9 dashboard tests. Everything runs against a fake provider and the
-dependency-free embedder, so the suite needs no key, costs nothing, downloads no model, and runs
-in CI on Python 3.10 and 3.12 on every push.
-
-The ones worth reading:
-
-| Test | What it pins down |
-|---|---|
-| `test_samples_are_not_collapsed_by_the_cache` | The k samples use distinct nonces, so the band is measured rather than always zero |
-| `test_hallucinated_quote_is_reported_not_cited` | A quote that is not in the document fails verification instead of being emitted |
-| `test_null_control_changes_nothing` | The audit's noise floor really is the same resume scored twice |
-| `test_audit_detects_a_deliberately_biased_model` | The audit fires on a model rigged to reward elite institutions |
-| `test_a_failing_response_is_evicted` | Invalid responses do not poison the cache forever |
-| `test_even_split_resolves_downward` | A 2-2 verdict split rounds against the candidate, not for them |
-| `test_unmet_must_have_overrides_a_good_score` | A high score that misses a hard requirement ranks below a lower one that meets everything |
 
 ## Stack and license
 
